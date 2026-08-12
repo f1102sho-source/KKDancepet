@@ -657,12 +657,23 @@ function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
     if (!streamRef.current) return;
     chunksRef.current = [];
     setTooShortWarning(false);
-    const rec = new MediaRecorder(streamRef.current);
+    // ブラウザが実際にサポートしている形式を優先的に選ぶ
+    const preferredTypes = [
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9,opus",
+      "video/webm",
+      "video/mp4",
+    ];
+    const supportedType = preferredTypes.find((t) => window.MediaRecorder?.isTypeSupported?.(t));
+    const rec = supportedType ? new MediaRecorder(streamRef.current, { mimeType: supportedType }) : new MediaRecorder(streamRef.current);
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data);
     };
     rec.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: "video/webm" });
+      // 実際に録画で使われた形式（rec.mimeType）をそのままラベルにする。
+      // ここが実際の符号化形式とズレていると、再読み込み時に「対応していない形式」として弾かれることがある。
+      const actualType = rec.mimeType || supportedType || "video/webm";
+      const blob = new Blob(chunksRef.current, { type: actualType });
       if (blob.size < 8000) {
         // 短すぎる/データが空の録画は解析に失敗しやすいので、撮り直しを促す
         setTooShortWarning(true);
