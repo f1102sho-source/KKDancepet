@@ -234,7 +234,10 @@ async function extractMotionCurve(url, samples = 10) {
       reject(err);
     };
 
-    video.onloadedmetadata = async () => {
+    let started = false;
+    const runOnce = async () => {
+      if (started) return;
+      started = true;
       try {
         await fixDuration(video);
         let duration = video.duration;
@@ -269,10 +272,17 @@ async function extractMotionCurve(url, samples = 10) {
         doneErr(e);
       }
     };
+    // ブラウザによって発火するイベントが違うため、複数のきっかけで開始できるようにする
+    video.onloadedmetadata = runOnce;
+    video.onloadeddata = runOnce;
+    video.oncanplay = runOnce;
     video.onerror = () => {
-      doneErr(new Error("動画を読み込めませんでした"));
+      const codeNames = { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" };
+      const code = video.error?.code;
+      doneErr(new Error("動画を読み込めませんでした" + (code ? `（コード:${codeNames[code] || code}）` : "")));
     };
     video.src = url;
+    video.load();
   });
 }
 
@@ -641,15 +651,23 @@ function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
     };
   }, []);
 
+  const [tooShortWarning, setTooShortWarning] = useState(false);
+
   const startRecording = () => {
     if (!streamRef.current) return;
     chunksRef.current = [];
+    setTooShortWarning(false);
     const rec = new MediaRecorder(streamRef.current);
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data);
     };
     rec.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
+      if (blob.size < 8000) {
+        // 短すぎる/データが空の録画は解析に失敗しやすいので、撮り直しを促す
+        setTooShortWarning(true);
+        return;
+      }
       const url = URL.createObjectURL(blob);
       setPreviewUrl(url);
     };
@@ -707,6 +725,9 @@ function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
         <button className={`record-btn ${recording ? "recording" : ""}`} onClick={recording ? stopRecording : startRecording}>
           {recording ? "とめる ■" : "とる ●"}
         </button>
+      )}
+      {tooShortWarning && !previewUrl && (
+        <p className="cam-warning">みじかすぎて上手くとれなかったよ。もう少し長め（2秒くらい）にとってみてね。</p>
       )}
 
       {previewUrl && (
@@ -1228,6 +1249,7 @@ const GLOBAL_CSS = `
 .cam-error{color:white;text-align:center;display:flex;flex-direction:column;gap:8px;align-items:center;padding:0 16px;}
 .cam-error-title{font-weight:800;font-size:.95rem;margin:0;}
 .cam-error-detail{font-size:.75rem;opacity:.85;margin:0;}
+.cam-warning{color:#a53232;font-weight:700;font-size:.8rem;text-align:center;}
 .upload-btn{background:var(--sun);color:var(--ink);padding:10px 18px;border-radius:14px;font-weight:800;cursor:pointer;}
 .upload-btn.big{padding:22px 26px;font-size:1rem;}
 .upload-btn-wrap{position:relative;display:inline-block;border-radius:14px;overflow:hidden;background:var(--sun);}
