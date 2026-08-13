@@ -87,8 +87,7 @@ const ANIMALS = {
     kind: "ひよこ",
     stageEmojis: ["🥚", "🐣", "🐤", "🐔"],
     roomBg: "linear-gradient(180deg,#FFF3D2 0%,#FFE9A8 100%)",
-    floor: "#E8C86A",
-    accent: "#E0A62E",
+    floor: "#E8C86A",    accent: "#E0A62E",
   },
 };
 
@@ -140,7 +139,7 @@ function buildPraise(animalKey, score) {
   return `${stem}${ending}！`;
 }
 
-const STORAGE_KEY = "dance-grow-character-v2";
+const STORAGE_KEY = "dance-grow-character-v3";
 
 const ROOM_ITEMS = [
   { id: "mirror", name: "かがみ", emoji: "🪞", cost: 15 },
@@ -238,7 +237,7 @@ function fixDuration(video) {
    「対応していない形式」として弾かれることがあるため、それを避ける）
    あわせて「動きが始まったタイミング」も推定する（曲線の中で最初に
    一定以上のエネルギーになったサンプル位置＝動き出しとみなす）。 */
-async function extractMotionCurveFromElement(video, samples = 16) {
+async function extractMotionCurveFromElement(video, samples = 24) {
   await fixDuration(video);
   let duration = video.duration;
   if (!duration || !isFinite(duration) || duration <= 0) duration = 3;
@@ -276,8 +275,13 @@ async function extractMotionCurveFromElement(video, samples = 16) {
   const max = Math.max(...energies, 1);
   const curve = energies.map((e) => e / max);
 
-  // 動き出しタイミングの推定：正規化したエネルギーが閾値を超えた最初の地点
-  const threshold = 0.18;
+  // 動き出しタイミングの推定：
+  // 「じっとしている状態(冒頭の平均エネルギー)」を基準にして、そこから
+  // どれだけ動きが増えたかで判定する（固定のしきい値だと、動画ごとの
+  // 明るさや揺れの差で始まりの位置がずれてしまうため）。
+  const baselineCount = Math.max(2, Math.round(curve.length * 0.15));
+  const baseline = curve.slice(0, baselineCount).reduce((a, b) => a + b, 0) / baselineCount;
+  const threshold = baseline + (1 - baseline) * 0.22;
   let startIdx = curve.findIndex((v) => v >= threshold);
   if (startIdx === -1) startIdx = 0;
   const startTime = sampleTimes[startIdx] ?? 0;
@@ -498,6 +502,28 @@ function RoomDecorations({ owned, editable, onDragEnd }) {
   );
 }
 
+/* げんき度が下がると出てくる、うんち */
+function RoomMess({ count }) {
+  if (!count) return null;
+  // 毎回バラバラの位置にならないよう、決まった配置パターンを使う
+  const positions = [
+    { left: "20%", top: "78%" },
+    { left: "68%", top: "40%" },
+    { left: "40%", top: "85%" },
+    { left: "80%", top: "70%" },
+    { left: "12%", top: "45%" },
+  ];
+  return (
+    <>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="poop-item" style={positions[i % positions.length]}>
+          💩
+        </div>
+      ))}
+    </>
+  );
+}
+
 function RoomShop({ roomPoints, owned, onBuy }) {
   const ownedIds = owned.map((d) => d.id);
   return (
@@ -550,6 +576,7 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
   const [elapsedSec, setElapsedSec] = useState(0);
   const recognitionRef = useRef(null);
   const finalTextRef = useRef("");
+  const sessionFinalizedIdxRef = useRef(0);
   const shouldContinueRef = useRef(false);
   const maxTimerRef = useRef(null);
   const tickTimerRef = useRef(null);
@@ -562,20 +589,25 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
     }
     const rec = new SR();
     rec.lang = "ja-JP";
-    rec.continuous = true;
+    // continuous=trueだと端末によってresultIndexの扱いが不安定で
+    // 同じ内容が繰り返し積み上がることがあるため、あえて短いセッションを
+    // 繋げていく方式にする（1セッション＝1つの発話のまとまり）。
+    rec.continuous = false;
     rec.interimResults = true;
-    // 新しく確定した部分だけを積み上げる（重複防止）
     rec.onresult = (e) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      let sessionInterim = "";
+      for (let i = 0; i < e.results.length; i++) {
         const res = e.results[i];
         if (res.isFinal) {
-          finalTextRef.current += res[0].transcript;
+          if (i >= sessionFinalizedIdxRef.current) {
+            finalTextRef.current += res[0].transcript;
+            sessionFinalizedIdxRef.current = i + 1;
+          }
         } else {
-          interim += res[0].transcript;
+          sessionInterim += res[0].transcript;
         }
       }
-      setTranscript(finalTextRef.current + interim);
+      setTranscript(finalTextRef.current + sessionInterim);
     };
     rec.onerror = (e) => {
       if (e.error === "no-speech" || e.error === "aborted") return; // 軽微なものは無視して継続
@@ -586,6 +618,7 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
       // 端末側が勝手に区切って止めてしまった場合は、続きから自動で再開する
       if (shouldContinueRef.current) {
         try {
+          sessionFinalizedIdxRef.current = 0;
           rec.start();
           return;
         } catch {
@@ -611,6 +644,7 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
     setSaved(false);
     setTranscript("");
     finalTextRef.current = "";
+    sessionFinalizedIdxRef.current = 0;
     setElapsedSec(0);
     shouldContinueRef.current = true;
     try {
@@ -653,7 +687,7 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
 
   return (
     <div className="reflection-card">
-      <div className="cal-title">🎤 反省ノート{alreadyRecordedToday ? "（今日はきろくずみ ✓）" : "（+2pt）"}</div>
+      <div className="cal-title">🎤 反省ノート{alreadyRecordedToday ? "（今日のポイントはきろくずみ・追加はOK ✓）" : "（+2pt）"}</div>
       {!supported && (
         <>
           <p className="cal-legend">この端末では音声にんしきが使えないので、キーボードで入力してね。</p>
@@ -712,7 +746,7 @@ function RoomCharacter({ animal, totalSnacks, health, size = 1, wander = true })
 }
 
 /* ============ カレンダー ============ */
-function PracticeCalendar({ practiceLog, reflections = {} }) {
+function PracticeCalendar({ practiceLog, reflections = {}, animalKey }) {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -744,7 +778,8 @@ function PracticeCalendar({ practiceLog, reflections = {} }) {
           const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
           const done = logSet.has(dateStr);
           const isToday = d === todayDate;
-          const hasReflection = !!reflections[dateStr];
+          const dayEntries = reflections[dateStr];
+          const hasReflection = Array.isArray(dayEntries) ? dayEntries.length > 0 : !!dayEntries;
           return (
             <button
               key={i}
@@ -752,7 +787,11 @@ function PracticeCalendar({ practiceLog, reflections = {} }) {
               onClick={() => setSelectedDate(selectedDate === dateStr ? null : dateStr)}
             >
               <span className="cal-day-num">{d}</span>
-              {done && <span className="cal-stamp">🐾</span>}
+              {done && (
+                <span className={`cal-stamp cal-stamp-${animalKey}`} aria-hidden="true">
+                  🐾
+                </span>
+              )}
               {hasReflection && <span className="cal-note-dot">📝</span>}
             </button>
           );
@@ -761,21 +800,55 @@ function PracticeCalendar({ practiceLog, reflections = {} }) {
       <div className="cal-legend">🐾 = 練習した日　📝 = 反省ノートあり（日付をタップで確認）</div>
       {selectedDate &&
         (() => {
-          const entry = reflections[selectedDate];
-          const normalized = entry ? (typeof entry === "string" ? { full: entry, summary: entry } : entry) : null;
+          const raw = reflections[selectedDate];
+          const entries = Array.isArray(raw) ? raw : raw ? [typeof raw === "string" ? { full: raw, summary: raw } : raw] : [];
           return (
             <div className="cal-reflection-view">
-              <div className="cal-reflection-date">{selectedDate}のはんせい（ようやく）</div>
-              <div className="cal-reflection-text">{normalized ? normalized.summary : "この日はまだ反省ノートがないよ。"}</div>
-              {normalized && normalized.full !== normalized.summary && (
-                <details className="cal-reflection-full">
-                  <summary>ぜんぶ見る</summary>
-                  <div className="cal-reflection-text">{normalized.full}</div>
-                </details>
-              )}
+              <div className="cal-reflection-date">{selectedDate}のはんせい（{entries.length}けん）</div>
+              {entries.length === 0 && <div className="cal-reflection-text">この日はまだ反省ノートがないよ。</div>}
+              {entries.map((entry, idx) => (
+                <div key={idx} className="cal-reflection-entry">
+                  <div className="cal-reflection-text">
+                    {entries.length > 1 ? `${idx + 1}回目： ` : ""}
+                    {entry.summary}
+                  </div>
+                  {entry.full !== entry.summary && (
+                    <details className="cal-reflection-full">
+                      <summary>ぜんぶ見る</summary>
+                      <div className="cal-reflection-text">{entry.full}</div>
+                    </details>
+                  )}
+                </div>
+              ))}
             </div>
           );
         })()}
+    </div>
+  );
+}
+
+/* ============ ペットに名前をつける ============ */
+function PetNamer({ onNameSet }) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="pet-namer">
+      <p className="cal-legend">すこし大きくなったね！なまえをつけてあげよう🎉</p>
+      <div className="pet-namer-row">
+        <input
+          className="pet-namer-input"
+          value={value}
+          maxLength={12}
+          placeholder="なまえを入力"
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button
+          className="primary-btn"
+          disabled={!value.trim()}
+          onClick={() => onNameSet(value.trim())}
+        >
+          きめる
+        </button>
+      </div>
     </div>
   );
 }
@@ -989,12 +1062,15 @@ function DanceGrowApp() {
   const [loaded, setLoaded] = useState(false);
   const [animal, setAnimal] = useState(null); // null = 部屋選択画面
   const [progress, setProgress] = useState({ dog: 0, cat: 0, chick: 0 });
-  const [streak, setStreak] = useState(0);
-  const [lastDate, setLastDate] = useState(null);
-  const [practiceLog, setPracticeLog] = useState([]);
-  const [roomPoints, setRoomPoints] = useState(0);
+  const [streaks, setStreaks] = useState({ dog: 0, cat: 0, chick: 0 });
+  const [lastDates, setLastDates] = useState({ dog: null, cat: null, chick: null });
+  const [practiceLogs, setPracticeLogs] = useState({ dog: [], cat: [], chick: [] });
+  const [roomPointsMap, setRoomPointsMap] = useState({ dog: 0, cat: 0, chick: 0 });
   const [decorations, setDecorations] = useState({ dog: [], cat: [], chick: [] });
-  const [reflections, setReflections] = useState({}); // { "YYYY-MM-DD": "text" }
+  const [reflectionsMap, setReflectionsMap] = useState({ dog: {}, cat: {}, chick: {} }); // {animal: {date: [entries]}}
+  const [petNames, setPetNames] = useState({ dog: null, cat: null, chick: null });
+  const [dirtiness, setDirtiness] = useState({ dog: 0, cat: 0, chick: 0 });
+  const [lastDirtCheck, setLastDirtCheck] = useState({ dog: null, cat: null, chick: null });
   const leftVideoRef = useRef(null);
   const rightVideoRef = useRef(null);
 
@@ -1030,12 +1106,15 @@ function DanceGrowApp() {
         if (res?.value) {
           const s = JSON.parse(res.value);
           setProgress(s.progress || { dog: 0, cat: 0, chick: 0 });
-          setStreak(s.streak || 0);
-          setLastDate(s.lastDate || null);
-          setPracticeLog(s.practiceLog || []);
-          setRoomPoints(s.roomPoints || 0);
+          setStreaks(s.streaks || { dog: 0, cat: 0, chick: 0 });
+          setLastDates(s.lastDates || { dog: null, cat: null, chick: null });
+          setPracticeLogs(s.practiceLogs || { dog: [], cat: [], chick: [] });
+          setRoomPointsMap(s.roomPointsMap || { dog: 0, cat: 0, chick: 0 });
           setDecorations(s.decorations || { dog: [], cat: [], chick: [] });
-          setReflections(s.reflections || {});
+          setReflectionsMap(s.reflectionsMap || { dog: {}, cat: {}, chick: {} });
+          setPetNames(s.petNames || { dog: null, cat: null, chick: null });
+          setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
+          setLastDirtCheck(s.lastDirtCheck || { dog: null, cat: null, chick: null });
         }
       } catch {
         // 初回は何もない
@@ -1052,12 +1131,15 @@ function DanceGrowApp() {
           STORAGE_KEY,
           JSON.stringify({
             progress: next.progress ?? progress,
-            streak: next.streak ?? streak,
-            lastDate: next.lastDate ?? lastDate,
-            practiceLog: next.practiceLog ?? practiceLog,
-            roomPoints: next.roomPoints ?? roomPoints,
+            streaks: next.streaks ?? streaks,
+            lastDates: next.lastDates ?? lastDates,
+            practiceLogs: next.practiceLogs ?? practiceLogs,
+            roomPointsMap: next.roomPointsMap ?? roomPointsMap,
             decorations: next.decorations ?? decorations,
-            reflections: next.reflections ?? reflections,
+            reflectionsMap: next.reflectionsMap ?? reflectionsMap,
+            petNames: next.petNames ?? petNames,
+            dirtiness: next.dirtiness ?? dirtiness,
+            lastDirtCheck: next.lastDirtCheck ?? lastDirtCheck,
           }),
           false
         );
@@ -1065,7 +1147,7 @@ function DanceGrowApp() {
         // 保存に失敗しても遊べる
       }
     },
-    [progress, streak, lastDate, practiceLog, roomPoints, decorations, reflections]
+    [progress, streaks, lastDates, practiceLogs, roomPointsMap, decorations, reflectionsMap, petNames, dirtiness, lastDirtCheck]
   );
 
   useEffect(() => {
@@ -1087,15 +1169,16 @@ function DanceGrowApp() {
     const item = ROOM_ITEMS.find((i) => i.id === itemId);
     if (!item || !animal) return;
     const ownedIds = decorations[animal].map((d) => d.id);
-    if (ownedIds.includes(itemId) || roomPoints < item.cost) return;
+    const currentPoints = roomPointsMap[animal];
+    if (ownedIds.includes(itemId) || currentPoints < item.cost) return;
     const count = decorations[animal].length;
     const x = 15 + (count % 4) * 20;
     const y = 22 + Math.floor(count / 4) * 24;
     const newDecorations = { ...decorations, [animal]: [...decorations[animal], { id: itemId, x, y }] };
-    const newPoints = roomPoints - item.cost;
+    const newRoomPointsMap = { ...roomPointsMap, [animal]: currentPoints - item.cost };
     setDecorations(newDecorations);
-    setRoomPoints(newPoints);
-    persist({ decorations: newDecorations, roomPoints: newPoints });
+    setRoomPointsMap(newRoomPointsMap);
+    persist({ decorations: newDecorations, roomPointsMap: newRoomPointsMap });
   };
 
   const moveItem = (itemId, x, y) => {
@@ -1107,14 +1190,59 @@ function DanceGrowApp() {
   };
 
   const saveReflection = (text) => {
+    if (!animal) return;
     const today = todayStr();
-    const isFirstToday = !reflections[today];
-    const entry = { full: text, summary: summarizeText(text) };
-    const newReflections = { ...reflections, [today]: entry };
-    const newPoints = isFirstToday ? roomPoints + 2 : roomPoints;
-    setReflections(newReflections);
-    if (isFirstToday) setRoomPoints(newPoints);
-    persist({ reflections: newReflections, roomPoints: newPoints });
+    const animalReflections = reflectionsMap[animal] || {};
+    const dayEntries = animalReflections[today] || [];
+    const isFirstToday = dayEntries.length === 0;
+    const entry = { time: new Date().toISOString(), full: text, summary: summarizeText(text) };
+    const newAnimalReflections = { ...animalReflections, [today]: [...dayEntries, entry] };
+    const newReflectionsMap = { ...reflectionsMap, [animal]: newAnimalReflections };
+    const newRoomPointsMap = isFirstToday ? { ...roomPointsMap, [animal]: roomPointsMap[animal] + 2 } : roomPointsMap;
+    setReflectionsMap(newReflectionsMap);
+    if (isFirstToday) setRoomPointsMap(newRoomPointsMap);
+    persist({ reflectionsMap: newReflectionsMap, roomPointsMap: newRoomPointsMap });
+  };
+
+  const setPetName = (name) => {
+    if (!animal) return;
+    const newNames = { ...petNames, [animal]: name };
+    setPetNames(newNames);
+    persist({ petNames: newNames });
+  };
+
+  const DIRT_THRESHOLD_HEALTH = 35; // ふきげん(😾)以下になるとうんちが出る
+  const MAX_DIRT = 5;
+
+  // げんき度が低いまま1日経つと、うんちが1つ増える（1日1回だけ判定）
+  useEffect(() => {
+    if (!loaded || !animal) return;
+    const today = todayStr();
+    if (lastDirtCheck[animal] === today) return;
+    const h = calcHealth(lastDates[animal]);
+    if (h < DIRT_THRESHOLD_HEALTH) {
+      const newDirtiness = { ...dirtiness, [animal]: Math.min(MAX_DIRT, dirtiness[animal] + 1) };
+      const newLastDirtCheck = { ...lastDirtCheck, [animal]: today };
+      setDirtiness(newDirtiness);
+      setLastDirtCheck(newLastDirtCheck);
+      persist({ dirtiness: newDirtiness, lastDirtCheck: newLastDirtCheck });
+    } else {
+      const newLastDirtCheck = { ...lastDirtCheck, [animal]: today };
+      setLastDirtCheck(newLastDirtCheck);
+      persist({ lastDirtCheck: newLastDirtCheck });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, animal]);
+
+  const cleanRoom = () => {
+    if (!animal) return;
+    const CLEAN_COST = 2;
+    if (dirtiness[animal] <= 0 || roomPointsMap[animal] < CLEAN_COST) return;
+    const newDirtiness = { ...dirtiness, [animal]: 0 };
+    const newRoomPointsMap = { ...roomPointsMap, [animal]: roomPointsMap[animal] - CLEAN_COST };
+    setDirtiness(newDirtiness);
+    setRoomPointsMap(newRoomPointsMap);
+    persist({ dirtiness: newDirtiness, roomPointsMap: newRoomPointsMap });
   };
 
   const startFlow = (m) => {
@@ -1150,21 +1278,32 @@ function DanceGrowApp() {
       setPraiseMessage(buildPraise(animal, s));
 
       const today = todayStr();
-      let newStreak = streak;
-      if (lastDate !== today) {
-        newStreak = lastDate === todayStr(-1) ? streak + 1 : 1;
+      const prevStreak = streaks[animal];
+      const prevLastDate = lastDates[animal];
+      let newStreak = prevStreak;
+      if (prevLastDate !== today) {
+        newStreak = prevLastDate === todayStr(-1) ? prevStreak + 1 : 1;
       }
       const newProgress = { ...progress, [animal]: progress[animal] + (success ? 1 : 0) };
-      const isNewDay = !practiceLog.includes(today);
-      const newLog = isNewDay ? [...practiceLog, today].slice(-90) : practiceLog;
-      const newPoints = isNewDay ? roomPoints + 5 : roomPoints;
+      const isNewDay = !practiceLogs[animal].includes(today);
+      const newLog = isNewDay ? [...practiceLogs[animal], today].slice(-90) : practiceLogs[animal];
+      const newRoomPointsMap = isNewDay ? { ...roomPointsMap, [animal]: roomPointsMap[animal] + 5 } : roomPointsMap;
+      const newStreaks = { ...streaks, [animal]: newStreak };
+      const newLastDates = { ...lastDates, [animal]: today };
+      const newPracticeLogs = { ...practiceLogs, [animal]: newLog };
 
-      setStreak(newStreak);
-      setLastDate(today);
+      setStreaks(newStreaks);
+      setLastDates(newLastDates);
       setProgress(newProgress);
-      setPracticeLog(newLog);
-      setRoomPoints(newPoints);
-      persist({ streak: newStreak, lastDate: today, progress: newProgress, practiceLog: newLog, roomPoints: newPoints });
+      setPracticeLogs(newPracticeLogs);
+      setRoomPointsMap(newRoomPointsMap);
+      persist({
+        streaks: newStreaks,
+        lastDates: newLastDates,
+        progress: newProgress,
+        practiceLogs: newPracticeLogs,
+        roomPointsMap: newRoomPointsMap,
+      });
 
       setScreen("result");
       if (success) {
@@ -1187,7 +1326,7 @@ function DanceGrowApp() {
     );
   }
 
-  const health = calcHealth(lastDate);
+  const health = animal ? calcHealth(lastDates[animal]) : 75;
   const tier = animal ? healthTier(health) : null;
   const a = animal ? ANIMALS[animal] : null;
   const stageIdx = animal ? (animal === "chick" ? Math.min(getStageIndex(progress[animal]), 3) : getStageIndex(progress[animal])) : 0;
@@ -1199,7 +1338,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-13-e</p>
+          <p className="build-tag-top">build 2026-08-13-g</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -1210,7 +1349,7 @@ function DanceGrowApp() {
                   <div className="door-emoji wander-mini">
                     <CharacterArt animal={k} stageIdx={stIdx} sizeMult={1} />
                   </div>
-                  <div className="door-name">{ANIMALS[k].name}のへや</div>
+                  <div className="door-name">{petNames[k] ? `${petNames[k]}のへや` : `${ANIMALS[k].name}のへや`}</div>
                   <div className="door-stage">{st.label}</div>
                   <div className="door-enter">入る ▶</div>
                 </button>
@@ -1225,12 +1364,13 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-13-e</div>
+          <div className="build-tag">build 2026-08-13-g</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
             <RoomDecorations owned={decorations[animal]} editable={editMode} onDragEnd={moveItem} />
-            {streak > 0 && <div className="streak-badge">🔥 {streak}日れんぞく</div>}
+            <RoomMess count={dirtiness[animal]} />
+            {streaks[animal] > 0 && <div className="streak-badge">🔥 {streaks[animal]}日れんぞく</div>}
             <RoomCharacter animal={animal} totalSnacks={progress[animal]} health={health} size={1.3} wander={!editMode} />
             {tier.msg && !editMode && (
               <div className="mood-bubble">
@@ -1241,6 +1381,12 @@ function DanceGrowApp() {
             {editMode && <div className="edit-hint">かぐをドラッグして動かせるよ ✋</div>}
           </div>
 
+          {dirtiness[animal] > 0 && (
+            <button className="clean-btn" disabled={roomPointsMap[animal] < 2} onClick={cleanRoom}>
+              🧹 おそうじする（-2pt）{roomPointsMap[animal] < 2 ? "（ポイントが足りないよ）" : ""}
+            </button>
+          )}
+
           <button className={`layout-toggle-btn ${editMode ? "active" : ""}`} onClick={() => setEditMode(!editMode)}>
             {editMode ? "✅ レイアウトかんりょう" : "🖐️ 部屋をととのえる"}
           </button>
@@ -1248,7 +1394,8 @@ function DanceGrowApp() {
           <div className="stat-row">
             <div className="stat-box">
               <div className="stat-label">なまえ</div>
-              <div className="stat-value">{a.name}</div>
+              <div className="stat-value">{petNames[animal] ? petNames[animal] : a.name}</div>
+              {petNames[animal] && <div className="stat-sublabel">{a.name}</div>}
             </div>
             <div className="stat-box">
               <div className="stat-label">せいちょう</div>
@@ -1261,6 +1408,8 @@ function DanceGrowApp() {
               </div>
             </div>
           </div>
+
+          {stageIdx >= 1 && !petNames[animal] && <PetNamer onNameSet={setPetName} />}
 
           <div className="mode-toggle">
             <button className={`mode-btn ${mode === "self" ? "active" : ""}`} onClick={() => setMode("self")}>
@@ -1275,8 +1424,8 @@ function DanceGrowApp() {
             今日の練習をはじめる ▶
           </button>
 
-          <PracticeCalendar practiceLog={practiceLog} reflections={reflections} />
-          <RoomShop roomPoints={roomPoints} owned={decorations[animal]} onBuy={buyItem} />
+          <PracticeCalendar practiceLog={practiceLogs[animal]} reflections={reflectionsMap[animal]} animalKey={animal} />
+          <RoomShop roomPoints={roomPointsMap[animal]} owned={decorations[animal]} onBuy={buyItem} />
         </div>
       )}
 
@@ -1463,7 +1612,7 @@ function DanceGrowApp() {
               </p>
               <ReflectionRecorder
                 onSaved={(text) => saveReflection(text)}
-                alreadyRecordedToday={!!reflections[todayStr()]}
+                alreadyRecordedToday={!!(reflectionsMap[animal]?.[todayStr()]?.length > 0)}
               />
               <button className="cta-btn" onClick={() => setScreen("hub")}>
                 おへやにもどる
@@ -1522,6 +1671,9 @@ const GLOBAL_CSS = `
 .streak-badge{position:absolute;top:12px;left:14px;background:var(--card);border-radius:999px;padding:4px 10px;font-size:.75rem;font-weight:700;z-index:2;}
 .mood-bubble{position:absolute;bottom:10px;left:10px;right:10px;background:rgba(255,255,255,.92);border-radius:14px;padding:8px 12px;font-size:.78rem;z-index:2;}
 .deco-item{position:absolute;font-size:1.6rem;filter:drop-shadow(0 3px 3px rgba(0,0,0,.15));z-index:1;transform:translate(-50%,-50%);touch-action:none;}
+.poop-item{position:absolute;font-size:1.4rem;transform:translate(-50%,-50%);z-index:1;filter:drop-shadow(0 2px 2px rgba(0,0,0,.15));}
+.clean-btn{width:100%;padding:10px;border:none;border-radius:14px;background:#F0E6D2;color:#7a5a2e;font-weight:800;font-size:.85rem;cursor:pointer;box-shadow:0 3px 0 rgba(0,0,0,.06);}
+.clean-btn:disabled{opacity:.5;cursor:default;}
 .deco-item.draggable{cursor:grab;padding:6px;border-radius:12px;}
 .deco-item.draggable:hover{background:rgba(255,255,255,.35);}
 .deco-item.dragging{cursor:grabbing;background:rgba(255,255,255,.5);z-index:5;}
@@ -1549,6 +1701,7 @@ const GLOBAL_CSS = `
 .stat-row{display:flex;gap:8px;width:100%;}
 .stat-box{flex:1;background:var(--card);border-radius:14px;padding:8px 10px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
 .stat-label{font-size:.65rem;color:#8a9690;}
+.stat-sublabel{font-size:.6rem;color:#8a9690;margin-top:-2px;}
 .stat-value{font-weight:800;font-size:.9rem;}
 .health-bar{width:100%;height:10px;background:#eee;border-radius:999px;overflow:hidden;margin-top:4px;}
 .health-fill{height:100%;transition:width .3s;}
@@ -1625,6 +1778,15 @@ const GLOBAL_CSS = `
 .cal-reflection-text{font-size:.8rem;line-height:1.5;white-space:pre-wrap;}
 .cal-reflection-full{margin-top:6px;font-size:.75rem;color:#5b6b64;}
 .cal-reflection-full summary{cursor:pointer;font-weight:700;}
+.cal-reflection-entry{margin-top:6px;padding-top:6px;border-top:1px solid #e6e2d6;}
+.cal-reflection-entry:first-of-type{margin-top:0;padding-top:0;border-top:none;}
+.cal-stamp-cat{filter:hue-rotate(210deg);}
+.cal-stamp-chick{filter:hue-rotate(45deg) saturate(1.3);}
+
+/* ペットの名前づけ */
+.pet-namer{width:100%;background:var(--card);border-radius:16px;padding:12px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.pet-namer-row{display:flex;gap:8px;margin-top:6px;}
+.pet-namer-input{flex:1;border-radius:12px;border:1px solid #e0ddd3;padding:8px 10px;font-family:inherit;font-size:.85rem;}
 
 /* 反省ノート */
 .reflection-card{width:100%;background:var(--card);border-radius:20px;padding:14px;box-shadow:0 4px 0 rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;}
