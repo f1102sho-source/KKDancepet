@@ -948,6 +948,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
+          <p className="build-tag-top">build 2026-08-13-c</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -973,7 +974,7 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-13-b</div>
+          <div className="build-tag">build 2026-08-13-c</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
@@ -1293,6 +1294,7 @@ const GLOBAL_CSS = `
 .cam-error-detail{font-size:.75rem;opacity:.85;margin:0;}
 .cam-warning{color:#a53232;font-weight:700;font-size:.8rem;text-align:center;}
 .build-tag{align-self:flex-end;font-size:.6rem;color:#b7c2bd;}
+.build-tag-top{font-size:.65rem;color:#8a9690;margin:0;font-weight:700;}
 .upload-btn{background:var(--sun);color:var(--ink);padding:10px 18px;border-radius:14px;font-weight:800;cursor:pointer;}
 .upload-btn.big{padding:22px 26px;font-size:1rem;}
 .upload-btn-wrap{position:relative;display:inline-block;border-radius:14px;overflow:hidden;background:var(--sun);}
