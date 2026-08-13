@@ -116,6 +116,30 @@ const CHEERS = [
   "あと少し、がんばれ！",
 ];
 
+/* 動物ごとの語尾つき褒め言葉 */
+const ANIMAL_ENDINGS = { dog: "ワン", cat: "にゃん", chick: "ピヨ" };
+const PRAISE_STEMS_HIGH = [
+  "さいごの方がリズムにぴったり合ってきた",
+  "うごきがどんどん大きくなってきた",
+  "はじめよりずっと堂々とおどれてた",
+  "テンポがきれいにそろってきた",
+  "えがおで楽しそうにおどれてた",
+  "うでの動きにキレが出てきた",
+];
+const PRAISE_STEMS_LOW = [
+  "さいごまでちゃんとおどりきった",
+  "毎日ちょっとずつ積み重ねてるのがえらい",
+  "つづけてるだけですごい",
+  "つぎはもっとうまくなる予感がする",
+  "あきらめずにおどってたのがよかった",
+];
+function buildPraise(animalKey, score) {
+  const stems = score >= 60 ? PRAISE_STEMS_HIGH : PRAISE_STEMS_LOW;
+  const stem = stems[Math.floor(Math.random() * stems.length)];
+  const ending = ANIMAL_ENDINGS[animalKey] || "";
+  return `${stem}${ending}！`;
+}
+
 const STORAGE_KEY = "dance-grow-character-v2";
 
 const ROOM_ITEMS = [
@@ -498,12 +522,37 @@ function RoomShop({ roomPoints, owned, onBuy }) {
 }
 
 /* ============ 反省ノート（音声吹き込み） ============ */
+/* 簡易的な要約（サーバーに接続しないため、AIによる要約ではなく
+   文の重複除去＋先頭数文の抜き出しによる簡易整理） */
+function summarizeText(text, maxLen = 60) {
+  const sentences = text
+    .split(/(?<=[。！？])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const dedup = [];
+  for (const s of sentences) {
+    if (dedup[dedup.length - 1] !== s) dedup.push(s);
+  }
+  let joined = dedup.join("");
+  if (!joined) joined = text.trim();
+  if (joined.length <= maxLen) return joined;
+  let summary = dedup.slice(0, 2).join("");
+  if (summary.length > maxLen) summary = summary.slice(0, maxLen) + "…";
+  else if (dedup.length > 2) summary += "…";
+  return summary;
+}
+
 function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
   const [supported, setSupported] = useState(true);
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [saved, setSaved] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const recognitionRef = useRef(null);
+  const finalTextRef = useRef("");
+  const shouldContinueRef = useRef(false);
+  const maxTimerRef = useRef(null);
+  const tickTimerRef = useRef(null);
 
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -515,43 +564,83 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
     rec.lang = "ja-JP";
     rec.continuous = true;
     rec.interimResults = true;
+    // 新しく確定した部分だけを積み上げる（重複防止）
     rec.onresult = (e) => {
-      let finalText = "";
-      for (let i = 0; i < e.results.length; i++) {
-        finalText += e.results[i][0].transcript;
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) {
+          finalTextRef.current += res[0].transcript;
+        } else {
+          interim += res[0].transcript;
+        }
       }
-      setTranscript(finalText);
+      setTranscript(finalTextRef.current + interim);
     };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => setListening(false);
+    rec.onerror = (e) => {
+      if (e.error === "no-speech" || e.error === "aborted") return; // 軽微なものは無視して継続
+      shouldContinueRef.current = false;
+      setListening(false);
+    };
+    rec.onend = () => {
+      // 端末側が勝手に区切って止めてしまった場合は、続きから自動で再開する
+      if (shouldContinueRef.current) {
+        try {
+          rec.start();
+          return;
+        } catch {
+          /* noop */
+        }
+      }
+      setListening(false);
+    };
     recognitionRef.current = rec;
     return () => {
+      shouldContinueRef.current = false;
       try {
         rec.stop();
       } catch {
         /* noop */
       }
+      if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
+      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
     };
   }, []);
 
   const startListening = () => {
     setSaved(false);
     setTranscript("");
+    finalTextRef.current = "";
+    setElapsedSec(0);
+    shouldContinueRef.current = true;
     try {
       recognitionRef.current?.start();
       setListening(true);
     } catch {
       /* すでに開始している場合は無視 */
     }
+    if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
+    maxTimerRef.current = setTimeout(() => stopListening(), 60000); // 最長1分
+    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
+    tickTimerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
   };
 
   const stopListening = () => {
+    shouldContinueRef.current = false;
     try {
       recognitionRef.current?.stop();
     } catch {
       /* noop */
     }
     setListening(false);
+    if (maxTimerRef.current) {
+      clearTimeout(maxTimerRef.current);
+      maxTimerRef.current = null;
+    }
+    if (tickTimerRef.current) {
+      clearInterval(tickTimerRef.current);
+      tickTimerRef.current = null;
+    }
   };
 
   const handleSave = () => {
@@ -559,6 +648,8 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
     onSaved(transcript.trim());
     setSaved(true);
   };
+
+  const remaining = Math.max(0, 60 - elapsedSec);
 
   return (
     <div className="reflection-card">
@@ -580,7 +671,7 @@ function ReflectionRecorder({ onSaved, alreadyRecordedToday }) {
       {supported && (
         <>
           <button className={`mic-btn ${listening ? "listening" : ""}`} onClick={listening ? stopListening : startListening}>
-            {listening ? "🔴 きろく中...（タップでとめる）" : "🎤 タップして話す"}
+            {listening ? `🔴 きろく中...（のこり${remaining}びょう／タップでとめる）` : "🎤 タップして話す"}
           </button>
           {transcript && (
             <textarea
@@ -668,12 +759,24 @@ function PracticeCalendar({ practiceLog, reflections = {} }) {
         })}
       </div>
       <div className="cal-legend">🐾 = 練習した日　📝 = 反省ノートあり（日付をタップで確認）</div>
-      {selectedDate && (
-        <div className="cal-reflection-view">
-          <div className="cal-reflection-date">{selectedDate}のはんせい</div>
-          <div className="cal-reflection-text">{reflections[selectedDate] || "この日はまだ反省ノートがないよ。"}</div>
-        </div>
-      )}    </div>
+      {selectedDate &&
+        (() => {
+          const entry = reflections[selectedDate];
+          const normalized = entry ? (typeof entry === "string" ? { full: entry, summary: entry } : entry) : null;
+          return (
+            <div className="cal-reflection-view">
+              <div className="cal-reflection-date">{selectedDate}のはんせい（ようやく）</div>
+              <div className="cal-reflection-text">{normalized ? normalized.summary : "この日はまだ反省ノートがないよ。"}</div>
+              {normalized && normalized.full !== normalized.summary && (
+                <details className="cal-reflection-full">
+                  <summary>ぜんぶ見る</summary>
+                  <div className="cal-reflection-text">{normalized.full}</div>
+                </details>
+              )}
+            </div>
+          );
+        })()}
+    </div>
   );
 }
 
@@ -916,6 +1019,7 @@ function DanceGrowApp() {
   const [cheer, setCheer] = useState(CHEERS[0]);
   const [score, setScore] = useState(null);
   const [awarded, setAwarded] = useState(false);
+  const [praiseMessage, setPraiseMessage] = useState("");
   const [burst, setBurst] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1005,7 +1109,8 @@ function DanceGrowApp() {
   const saveReflection = (text) => {
     const today = todayStr();
     const isFirstToday = !reflections[today];
-    const newReflections = { ...reflections, [today]: text };
+    const entry = { full: text, summary: summarizeText(text) };
+    const newReflections = { ...reflections, [today]: entry };
     const newPoints = isFirstToday ? roomPoints + 2 : roomPoints;
     setReflections(newReflections);
     if (isFirstToday) setRoomPoints(newPoints);
@@ -1042,6 +1147,7 @@ function DanceGrowApp() {
       setScore(s);
       const success = s >= 60;
       setAwarded(success);
+      setPraiseMessage(buildPraise(animal, s));
 
       const today = todayStr();
       let newStreak = streak;
@@ -1093,7 +1199,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-13-d</p>
+          <p className="build-tag-top">build 2026-08-13-e</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -1119,7 +1225,7 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-13-d</div>
+          <div className="build-tag">build 2026-08-13-e</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
@@ -1351,6 +1457,7 @@ function DanceGrowApp() {
                   </div>
                 )}
               </div>
+              {praiseMessage && <div className="speech-bubble praise-bubble">{praiseMessage}</div>}
               <p className="result-message">
                 {awarded ? "🎉 おやつタイム！すごい成長だね！" : "また明日もチャレンジしよう！"}
               </p>
@@ -1479,6 +1586,7 @@ const GLOBAL_CSS = `
 
 .timer-screen{align-items:center;text-align:center;padding-top:20px;}
 .speech-bubble{background:var(--card);border-radius:16px;padding:8px 16px;font-weight:700;box-shadow:0 3px 0 rgba(0,0,0,.06);}
+.praise-bubble{text-align:center;font-size:.85rem;}
 .timer-count{font-size:2.4rem;font-weight:800;letter-spacing:.05em;}
 .timer-caption{font-size:.85rem;color:#5b6b64;}
 
@@ -1515,6 +1623,8 @@ const GLOBAL_CSS = `
 .cal-reflection-view{margin-top:10px;background:#F7F5EF;border-radius:14px;padding:10px 12px;}
 .cal-reflection-date{font-weight:800;font-size:.78rem;margin-bottom:4px;}
 .cal-reflection-text{font-size:.8rem;line-height:1.5;white-space:pre-wrap;}
+.cal-reflection-full{margin-top:6px;font-size:.75rem;color:#5b6b64;}
+.cal-reflection-full summary{cursor:pointer;font-weight:700;}
 
 /* 反省ノート */
 .reflection-card{width:100%;background:var(--card);border-radius:20px;padding:14px;box-shadow:0 4px 0 rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;}
