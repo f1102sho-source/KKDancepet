@@ -35,24 +35,90 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-/* このファイルを外部ホスティングで開いたとき用の window.storage 代替
+/* ============ 端末をこえてデータをそろえるための設定 ============ */
+// ここにFirebaseの設定を入れると、どの端末から開いても同じデータが見える
+// ようになります（家族みんなで同じ「どうきコード」を使う前提）。
+// 空のままだと、これまで通り「この端末だけ」に保存されます。
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC9b10E93yF95PZL2E7TG3tCVq_6G12AJ0",
+  authDomain: "kkdancepet.firebaseapp.com",
+  projectId: "kkdancepet",
+  storageBucket: "kkdancepet.firebasestorage.app",
+  messagingSenderId: "376327446752",
+  appId: "1:376327446752:web:009d14f35c040a0867f085",
+};
+
+const SYNC_CODE_KEY = "dance-pet-sync-code";
+function getSyncCode() {
+  try {
+    return localStorage.getItem(SYNC_CODE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function setSyncCodeLocal(code) {
+  try {
+    localStorage.setItem(SYNC_CODE_KEY, code);
+  } catch {
+    /* noop */
+  }
+}
+
+let firestoreDb = null;
+const firebaseReady = !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
+if (firebaseReady && window.firebase) {
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    firestoreDb = firebase.firestore();
+  } catch (e) {
+    console.error("Firebase init failed", e);
+  }
+}
+
+/* このファイルを外部ホスティングで開いたとき用の window.storage 代替。
+   同期コードが設定されていてFirebaseが使える場合はクラウド(Firestore)に、
+   それ以外はこれまで通りこの端末だけのlocalStorageに保存する。
    （Claudeのアーティファクト内であれば元々の window.storage をそのまま使う） */
 if (!window.storage) {
   window.storage = {
     async get(key) {
+      const code = getSyncCode();
+      if (firestoreDb && code) {
+        const doc = await firestoreDb.collection("dancePetSync").doc(code).get();
+        if (!doc.exists || !(key in (doc.data() || {}))) throw new Error("not found");
+        return { key, value: doc.data()[key] };
+      }
       const v = localStorage.getItem(key);
       if (v === null) throw new Error("not found");
       return { key, value: v };
     },
     async set(key, value) {
+      const code = getSyncCode();
+      if (firestoreDb && code) {
+        await firestoreDb
+          .collection("dancePetSync")
+          .doc(code)
+          .set({ [key]: value, _updatedAt: Date.now() }, { merge: true });
+        return { key, value };
+      }
       localStorage.setItem(key, value);
       return { key, value };
     },
     async delete(key) {
+      const code = getSyncCode();
+      if (firestoreDb && code) {
+        await firestoreDb
+          .collection("dancePetSync")
+          .doc(code)
+          .set({ [key]: firebase.firestore.FieldValue.delete() }, { merge: true });
+        return { key, deleted: true };
+      }
       localStorage.removeItem(key);
       return { key, deleted: true };
     },
@@ -853,6 +919,48 @@ function PetNamer({ onNameSet }) {
   );
 }
 
+/* ============ 他の端末とデータをそろえる設定 ============ */
+function SyncSettings({ currentCode, onApply, status, firebaseReady }) {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState(currentCode || "");
+
+  useEffect(() => {
+    setInput(currentCode || "");
+  }, [currentCode]);
+
+  return (
+    <div className="sync-settings">
+      <button className="sync-toggle" onClick={() => setOpen(!open)}>
+        🔗 他の端末とそろえる{currentCode ? `（コード: ${currentCode}）` : ""}
+      </button>
+      {open && (
+        <div className="sync-panel">
+          {!firebaseReady && (
+            <p className="cal-legend">
+              まだクラウドの設定がされていないため、今はこの端末だけの保存になっています。設定方法はチャットで確認してね。
+            </p>
+          )}
+          <p className="cal-legend">
+            家族みんなで同じ「どうきコード」を入力すると、どの端末からでも同じ記録が見られるようになります。
+          </p>
+          <div className="pet-namer-row">
+            <input
+              className="pet-namer-input"
+              value={input}
+              placeholder="例）kk-dance-2026"
+              onChange={(e) => setInput(e.target.value)}
+            />
+            <button className="primary-btn" disabled={!input.trim()} onClick={() => onApply(input.trim())}>
+              てきよう
+            </button>
+          </div>
+          {status && <p className="cal-legend">{status}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============ カメラ撮影コンポーネント ============ */
 function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
   const videoRef = useRef(null);
@@ -1099,30 +1207,57 @@ function DanceGrowApp() {
   const [burst, setBurst] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get(STORAGE_KEY, false);
-        if (res?.value) {
-          const s = JSON.parse(res.value);
-          setProgress(s.progress || { dog: 0, cat: 0, chick: 0 });
-          setStreaks(s.streaks || { dog: 0, cat: 0, chick: 0 });
-          setLastDates(s.lastDates || { dog: null, cat: null, chick: null });
-          setPracticeLogs(s.practiceLogs || { dog: [], cat: [], chick: [] });
-          setRoomPointsMap(s.roomPointsMap || { dog: 0, cat: 0, chick: 0 });
-          setDecorations(s.decorations || { dog: [], cat: [], chick: [] });
-          setReflectionsMap(s.reflectionsMap || { dog: {}, cat: {}, chick: {} });
-          setPetNames(s.petNames || { dog: null, cat: null, chick: null });
-          setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
-          setLastDirtCheck(s.lastDirtCheck || { dog: null, cat: null, chick: null });
-        }
-      } catch {
-        // 初回は何もない
-      } finally {
-        setLoaded(true);
+  const [syncCode, setSyncCode] = useState("");
+  const [syncStatus, setSyncStatus] = useState(null);
+
+  const reloadAllData = useCallback(async () => {
+    setLoaded(false);
+    try {
+      const res = await window.storage.get(STORAGE_KEY, false);
+      if (res?.value) {
+        const s = JSON.parse(res.value);
+        setProgress(s.progress || { dog: 0, cat: 0, chick: 0 });
+        setStreaks(s.streaks || { dog: 0, cat: 0, chick: 0 });
+        setLastDates(s.lastDates || { dog: null, cat: null, chick: null });
+        setPracticeLogs(s.practiceLogs || { dog: [], cat: [], chick: [] });
+        setRoomPointsMap(s.roomPointsMap || { dog: 0, cat: 0, chick: 0 });
+        setDecorations(s.decorations || { dog: [], cat: [], chick: [] });
+        setReflectionsMap(s.reflectionsMap || { dog: {}, cat: {}, chick: {} });
+        setPetNames(s.petNames || { dog: null, cat: null, chick: null });
+        setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
+        setLastDirtCheck(s.lastDirtCheck || { dog: null, cat: null, chick: null });
+      } else {
+        // 同期コードを切り替えた先にまだデータがない場合は空の状態にする
+        setProgress({ dog: 0, cat: 0, chick: 0 });
+        setStreaks({ dog: 0, cat: 0, chick: 0 });
+        setLastDates({ dog: null, cat: null, chick: null });
+        setPracticeLogs({ dog: [], cat: [], chick: [] });
+        setRoomPointsMap({ dog: 0, cat: 0, chick: 0 });
+        setDecorations({ dog: [], cat: [], chick: [] });
+        setReflectionsMap({ dog: {}, cat: {}, chick: {} });
+        setPetNames({ dog: null, cat: null, chick: null });
+        setDirtiness({ dog: 0, cat: 0, chick: 0 });
+        setLastDirtCheck({ dog: null, cat: null, chick: null });
       }
-    })();
+    } catch {
+      // 初回は何もない（エラーでも空の状態のまま進める）
+    } finally {
+      setLoaded(true);
+    }
   }, []);
+
+  useEffect(() => {
+    setSyncCode(getSyncCode());
+    reloadAllData();
+  }, [reloadAllData]);
+
+  const applySyncCode = async (code) => {
+    setSyncCodeLocal(code);
+    setSyncCode(code);
+    setSyncStatus(firebaseReady ? "どうきちゅう..." : "（クラウド設定が未設定のため、この端末だけの保存のままです）");
+    await reloadAllData();
+    setSyncStatus(firebaseReady ? "どうき完了！このコードを他の端末にも入力してね" : null);
+  };
 
   const persist = useCallback(
     async (next) => {
@@ -1338,7 +1473,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-13-g</p>
+          <p className="build-tag-top">build 2026-08-13-h</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -1356,6 +1491,7 @@ function DanceGrowApp() {
               );
             })}
           </div>
+          <SyncSettings currentCode={syncCode} onApply={applySyncCode} status={syncStatus} firebaseReady={firebaseReady} />
         </div>
       )}
 
@@ -1364,7 +1500,7 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-13-g</div>
+          <div className="build-tag">build 2026-08-13-h</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
@@ -1787,6 +1923,11 @@ const GLOBAL_CSS = `
 .pet-namer{width:100%;background:var(--card);border-radius:16px;padding:12px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
 .pet-namer-row{display:flex;gap:8px;margin-top:6px;}
 .pet-namer-input{flex:1;border-radius:12px;border:1px solid #e0ddd3;padding:8px 10px;font-family:inherit;font-size:.85rem;}
+
+/* 端末間どうき設定 */
+.sync-settings{width:100%;margin-top:8px;}
+.sync-toggle{width:100%;background:none;border:none;color:#8a9690;font-size:.75rem;font-weight:700;cursor:pointer;padding:6px;}
+.sync-panel{background:var(--card);border-radius:14px;padding:12px;margin-top:6px;display:flex;flex-direction:column;gap:6px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
 
 /* 反省ノート */
 .reflection-card{width:100%;background:var(--card);border-radius:20px;padding:14px;box-shadow:0 4px 0 rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;}
