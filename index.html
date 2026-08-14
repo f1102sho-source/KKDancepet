@@ -1178,6 +1178,7 @@ function DanceGrowApp() {
   const [reflectionsMap, setReflectionsMap] = useState({ dog: {}, cat: {}, chick: {} }); // {animal: {date: [entries]}}
   const [petNames, setPetNames] = useState({ dog: null, cat: null, chick: null });
   const [dirtiness, setDirtiness] = useState({ dog: 0, cat: 0, chick: 0 });
+  const [restoredAug13, setRestoredAug13] = useState(false);
   const [lastDirtCheck, setLastDirtCheck] = useState({ dog: null, cat: null, chick: null });
   const leftVideoRef = useRef(null);
   const rightVideoRef = useRef(null);
@@ -1226,6 +1227,7 @@ function DanceGrowApp() {
         setPetNames(s.petNames || { dog: null, cat: null, chick: null });
         setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
         setLastDirtCheck(s.lastDirtCheck || { dog: null, cat: null, chick: null });
+        setRestoredAug13(!!s.restoredAug13);
       } else {
         // 同期コードを切り替えた先にまだデータがない場合は空の状態にする
         setProgress({ dog: 0, cat: 0, chick: 0 });
@@ -1238,6 +1240,7 @@ function DanceGrowApp() {
         setPetNames({ dog: null, cat: null, chick: null });
         setDirtiness({ dog: 0, cat: 0, chick: 0 });
         setLastDirtCheck({ dog: null, cat: null, chick: null });
+        setRestoredAug13(false);
       }
     } catch {
       // 初回は何もない（エラーでも空の状態のまま進める）
@@ -1275,6 +1278,7 @@ function DanceGrowApp() {
             petNames: next.petNames ?? petNames,
             dirtiness: next.dirtiness ?? dirtiness,
             lastDirtCheck: next.lastDirtCheck ?? lastDirtCheck,
+            restoredAug13: next.restoredAug13 ?? restoredAug13,
           }),
           false
         );
@@ -1282,7 +1286,7 @@ function DanceGrowApp() {
         // 保存に失敗しても遊べる
       }
     },
-    [progress, streaks, lastDates, practiceLogs, roomPointsMap, decorations, reflectionsMap, petNames, dirtiness, lastDirtCheck]
+    [progress, streaks, lastDates, practiceLogs, roomPointsMap, decorations, reflectionsMap, petNames, dirtiness, lastDirtCheck, restoredAug13]
   );
 
   useEffect(() => {
@@ -1380,6 +1384,39 @@ function DanceGrowApp() {
     persist({ dirtiness: newDirtiness, roomPointsMap: newRoomPointsMap });
   };
 
+  // 2026-08-13にクラウド同期の設定作業中にデータが消えてしまった分を、
+  // 3部屋ぶんまとめて一度だけ復元するための特別対応（一度使うと消える）
+  const restoreAug13Record = () => {
+    const targetDate = "2026-08-13";
+    const animals = ["dog", "cat", "chick"];
+    const newPracticeLogs = { ...practiceLogs };
+    const newRoomPointsMap = { ...roomPointsMap };
+    const newLastDates = { ...lastDates };
+    const newStreaks = { ...streaks };
+    animals.forEach((k) => {
+      if (!newPracticeLogs[k].includes(targetDate)) {
+        newPracticeLogs[k] = [...newPracticeLogs[k], targetDate].sort();
+      }
+      newRoomPointsMap[k] = (newRoomPointsMap[k] || 0) + 7;
+      if (!newLastDates[k] || newLastDates[k] < targetDate) {
+        newLastDates[k] = targetDate;
+      }
+      if (!newStreaks[k]) newStreaks[k] = 1;
+    });
+    setPracticeLogs(newPracticeLogs);
+    setRoomPointsMap(newRoomPointsMap);
+    setLastDates(newLastDates);
+    setStreaks(newStreaks);
+    setRestoredAug13(true);
+    persist({
+      practiceLogs: newPracticeLogs,
+      roomPointsMap: newRoomPointsMap,
+      lastDates: newLastDates,
+      streaks: newStreaks,
+      restoredAug13: true,
+    });
+  };
+
   const startFlow = (m) => {
     setMode(m);
     setBeforeUrl(null);
@@ -1473,7 +1510,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-13-h</p>
+          <p className="build-tag-top">build 2026-08-14-a</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -1492,6 +1529,11 @@ function DanceGrowApp() {
             })}
           </div>
           <SyncSettings currentCode={syncCode} onApply={applySyncCode} status={syncStatus} firebaseReady={firebaseReady} />
+          {!restoredAug13 && (
+            <button className="restore-btn" onClick={restoreAug13Record}>
+              🛠️ 8/13の記録（足あと＋7pt×3部屋）をもどす
+            </button>
+          )}
         </div>
       )}
 
@@ -1500,7 +1542,7 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-13-h</div>
+          <div className="build-tag">build 2026-08-14-a</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
@@ -1928,6 +1970,7 @@ const GLOBAL_CSS = `
 .sync-settings{width:100%;margin-top:8px;}
 .sync-toggle{width:100%;background:none;border:none;color:#8a9690;font-size:.75rem;font-weight:700;cursor:pointer;padding:6px;}
 .sync-panel{background:var(--card);border-radius:14px;padding:12px;margin-top:6px;display:flex;flex-direction:column;gap:6px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.restore-btn{width:100%;margin-top:8px;padding:10px;border:none;border-radius:14px;background:var(--sun);color:var(--ink);font-weight:800;font-size:.78rem;cursor:pointer;}
 
 /* 反省ノート */
 .reflection-card{width:100%;background:var(--card);border-radius:20px;padding:14px;box-shadow:0 4px 0 rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;}
