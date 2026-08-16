@@ -993,7 +993,12 @@ function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
       }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            aspectRatio: { ideal: 16 / 9 },
+          },
           audio: false,
         });
         if (cancelled) {
@@ -1084,13 +1089,22 @@ function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
       <div className="step-label">{label}</div>
       <div className="video-frame">
         {!previewUrl && !camError && (
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            style={{ transform: mirrored ? "scaleX(-1)" : "none" }}
-          />
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              style={{ transform: mirrored ? "scaleX(-1)" : "none" }}
+            />
+            <div className="frame-guide" aria-hidden="true">
+              <div className="frame-guide-line v1" />
+              <div className="frame-guide-line v2" />
+              <div className="frame-guide-line h1" />
+              <div className="frame-guide-line h2" />
+            </div>
+            <div className="frame-hint">まん中に立って、全身が入るようにしてね</div>
+          </>
         )}
         {previewUrl && (
           <video
@@ -1182,6 +1196,8 @@ function DanceGrowApp() {
   const [lastDirtCheck, setLastDirtCheck] = useState({ dog: null, cat: null, chick: null });
   const leftVideoRef = useRef(null);
   const rightVideoRef = useRef(null);
+  const [leftAspect, setLeftAspect] = useState(null);
+  const [rightAspect, setRightAspect] = useState(null);
 
   const [screen, setScreen] = useState("roomSelect");
   const [mode, setMode] = useState("self");
@@ -1432,6 +1448,8 @@ function DanceGrowApp() {
     setBurst(false);
     setError(null);
     setElapsed(0);
+    setLeftAspect(null);
+    setRightAspect(null);
     setScreen(m === "self" ? "before" : "teacherUpload");
   };
 
@@ -1510,7 +1528,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-14-a</p>
+          <p className="build-tag-top">build 2026-08-14-c</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -1542,7 +1560,7 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-14-a</div>
+          <div className="build-tag">build 2026-08-14-c</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
@@ -1743,15 +1761,41 @@ function DanceGrowApp() {
             </>
           ) : (
             <>
-              <div className="video-pair">
-                <video
-                  ref={leftVideoRef}
-                  src={mode === "self" ? beforeUrl : teacherUrl}
-                  controls
-                  playsInline
-                  muted
-                />
-                <video ref={rightVideoRef} src={mode === "self" ? afterUrl : ownUrl} controls playsInline muted />
+              <div
+                className={`video-pair ${
+                  (leftAspect && leftAspect < 1) || (rightAspect && rightAspect < 1) ? "has-portrait" : "has-landscape"
+                }`}
+              >
+                <div className="video-pair-item">
+                  <div className="video-pair-label">{mode === "self" ? "れんしゅうまえ" : "せんせいのお手本"}</div>
+                  <video
+                    ref={leftVideoRef}
+                    src={mode === "self" ? beforeUrl : teacherUrl}
+                    controls
+                    playsInline
+                    muted
+                    style={leftAspect ? { aspectRatio: leftAspect } : undefined}
+                    onLoadedMetadata={(e) => {
+                      const v = e.target;
+                      if (v.videoWidth && v.videoHeight) setLeftAspect(v.videoWidth / v.videoHeight);
+                    }}
+                  />
+                </div>
+                <div className="video-pair-item">
+                  <div className="video-pair-label">{mode === "self" ? "れんしゅうあと" : "じぶんのダンス"}</div>
+                  <video
+                    ref={rightVideoRef}
+                    src={mode === "self" ? afterUrl : ownUrl}
+                    controls
+                    playsInline
+                    muted
+                    style={rightAspect ? { aspectRatio: rightAspect } : undefined}
+                    onLoadedMetadata={(e) => {
+                      const v = e.target;
+                      if (v.videoWidth && v.videoHeight) setRightAspect(v.videoWidth / v.videoHeight);
+                    }}
+                  />
+                </div>
               </div>
               <button
                 className="sync-play-btn"
@@ -1900,6 +1944,13 @@ const GLOBAL_CSS = `
 .video-frame video{width:100%;height:100%;object-fit:cover;}
 .upload-frame{background:#f0efe9;}
 .mirror-btn{position:absolute;top:10px;right:10px;background:rgba(255,255,255,.85);border:none;border-radius:999px;width:38px;height:38px;font-size:1.1rem;cursor:pointer;}
+.frame-guide{position:absolute;inset:0;pointer-events:none;}
+.frame-guide-line{position:absolute;background:rgba(255,255,255,.35);}
+.frame-guide-line.v1{left:33.3%;top:0;bottom:0;width:1px;}
+.frame-guide-line.v2{left:66.6%;top:0;bottom:0;width:1px;}
+.frame-guide-line.h1{top:33.3%;left:0;right:0;height:1px;}
+.frame-guide-line.h2{top:66.6%;left:0;right:0;height:1px;}
+.frame-hint{position:absolute;bottom:10px;left:0;right:0;text-align:center;color:#fff;font-size:.7rem;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.6);pointer-events:none;}
 .record-btn{padding:14px 28px;border-radius:999px;border:none;background:var(--coral);color:white;font-weight:800;font-size:1rem;box-shadow:0 5px 0 #d9694a;cursor:pointer;}
 .record-btn.recording{background:#d94848;box-shadow:0 5px 0 #a53232;}
 .cam-error{color:white;text-align:center;display:flex;flex-direction:column;gap:8px;align-items:center;padding:0 16px;}
@@ -1925,7 +1976,10 @@ const GLOBAL_CSS = `
 
 .result-screen{align-items:center;}
 .video-pair{display:flex;gap:8px;width:100%;}
-.video-pair video{flex:1;width:0;border-radius:16px;background:#111;aspect-ratio:3/4;object-fit:cover;}
+.video-pair.has-landscape{flex-direction:column;}
+.video-pair-item{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.video-pair-label{font-size:.68rem;font-weight:700;color:#5b6b64;text-align:center;}
+.video-pair video{width:100%;border-radius:16px;background:#111;aspect-ratio:3/4;object-fit:contain;}
 .score-dial{font-size:2rem;font-weight:900;color:var(--coral);}
 .result-char{position:relative;}
 .result-char.bounce{animation:pop .5s ease;}
@@ -1992,13 +2046,17 @@ const GLOBAL_CSS = `
 
 @media (orientation:landscape){
   .app-root{padding:10px;}
-  .screen{max-width:860px;}
-  .capture-wrap{flex-direction:row;flex-wrap:wrap;justify-content:center;}
-  .video-frame{aspect-ratio:16/9;max-width:520px;}
-  .video-pair{flex-direction:row;}
-  .video-pair video{aspect-ratio:16/9;}
+  .screen{max-width:900px;}
+  .capture-wrap{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
+  .video-frame{aspect-ratio:16/9;max-width:560px;flex:1;min-width:280px;}
   .door-list{flex-direction:row;}
   .door-card{flex:1;}
+}
+@media (min-width:820px){
+  .screen{max-width:1100px;}
+  .video-pair.has-landscape{flex-direction:row;gap:28px;}
+  .video-pair{gap:28px;}
+  .video-pair-label{font-size:.85rem;}
 }
 `;
 
