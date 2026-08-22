@@ -961,6 +961,96 @@ function SyncSettings({ currentCode, onApply, status, firebaseReady }) {
   );
 }
 
+/* ============ きろくのバックアップ・復元 ============ */
+function BackupPanel({ getSnapshotJson, onRestore }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState(null); // 'export' | 'import'
+  const [exportText, setExportText] = useState("");
+  const [importText, setImportText] = useState("");
+  const [copyMsg, setCopyMsg] = useState("");
+  const [importMsg, setImportMsg] = useState("");
+
+  const openExport = () => {
+    setExportText(getSnapshotJson());
+    setMode("export");
+    setCopyMsg("");
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(exportText);
+      setCopyMsg("コピーしたよ！メモ帳などに貼って保存しておいてね");
+    } catch {
+      setCopyMsg("コピーできなかったよ。上の文字を長押しして自分でコピーしてね");
+    }
+  };
+
+  const handleRestore = () => {
+    try {
+      const parsed = JSON.parse(importText.trim());
+      onRestore(parsed);
+      setImportMsg("ふくげんしたよ！ホーム画面にもどって確認してね");
+    } catch {
+      setImportMsg("うまく読み取れなかったよ。バックアップした文章をそのまま貼り付けてね");
+    }
+  };
+
+  return (
+    <div className="sync-settings">
+      <button className="sync-toggle" onClick={() => setOpen(!open)}>
+        💾 きろくのバックアップ・復元
+      </button>
+      {open && (
+        <div className="sync-panel">
+          <p className="cal-legend">今のきろくを文章として書き出したり、書き出した文章から元に戻したりできます。</p>
+          <div className="btn-row">
+            <button
+              className="ghost-btn"
+              onClick={() => {
+                openExport();
+              }}
+            >
+              📤 書き出す
+            </button>
+            <button
+              className="ghost-btn"
+              onClick={() => {
+                setMode("import");
+                setImportMsg("");
+              }}
+            >
+              📥 復元する
+            </button>
+          </div>
+          {mode === "export" && (
+            <>
+              <textarea className="reflection-textarea backup-textarea" readOnly value={exportText} onFocus={(e) => e.target.select()} />
+              <button className="primary-btn" onClick={handleCopy}>
+                コピーする
+              </button>
+              {copyMsg && <p className="cal-legend">{copyMsg}</p>}
+            </>
+          )}
+          {mode === "import" && (
+            <>
+              <textarea
+                className="reflection-textarea backup-textarea"
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder="バックアップした文章をここに貼り付けてね"
+              />
+              <button className="primary-btn" disabled={!importText.trim()} onClick={handleRestore}>
+                この内容で復元する
+              </button>
+              {importMsg && <p className="cal-legend">{importMsg}</p>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============ カメラ撮影コンポーネント ============ */
 function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
   const videoRef = useRef(null);
@@ -1433,6 +1523,54 @@ function DanceGrowApp() {
     });
   };
 
+  const getSnapshotJson = () =>
+    JSON.stringify(
+      {
+        progress,
+        streaks,
+        lastDates,
+        practiceLogs,
+        roomPointsMap,
+        decorations,
+        reflectionsMap,
+        petNames,
+        dirtiness,
+        lastDirtCheck,
+        restoredAug13,
+        _backupAt: new Date().toISOString(),
+      },
+      null,
+      0
+    );
+
+  const restoreFromSnapshot = (s) => {
+    const next = {
+      progress: s.progress || { dog: 0, cat: 0, chick: 0 },
+      streaks: s.streaks || { dog: 0, cat: 0, chick: 0 },
+      lastDates: s.lastDates || { dog: null, cat: null, chick: null },
+      practiceLogs: s.practiceLogs || { dog: [], cat: [], chick: [] },
+      roomPointsMap: s.roomPointsMap || { dog: 0, cat: 0, chick: 0 },
+      decorations: s.decorations || { dog: [], cat: [], chick: [] },
+      reflectionsMap: s.reflectionsMap || { dog: {}, cat: {}, chick: {} },
+      petNames: s.petNames || { dog: null, cat: null, chick: null },
+      dirtiness: s.dirtiness || { dog: 0, cat: 0, chick: 0 },
+      lastDirtCheck: s.lastDirtCheck || { dog: null, cat: null, chick: null },
+      restoredAug13: !!s.restoredAug13,
+    };
+    setProgress(next.progress);
+    setStreaks(next.streaks);
+    setLastDates(next.lastDates);
+    setPracticeLogs(next.practiceLogs);
+    setRoomPointsMap(next.roomPointsMap);
+    setDecorations(next.decorations);
+    setReflectionsMap(next.reflectionsMap);
+    setPetNames(next.petNames);
+    setDirtiness(next.dirtiness);
+    setLastDirtCheck(next.lastDirtCheck);
+    setRestoredAug13(next.restoredAug13);
+    persist(next);
+  };
+
   const startFlow = (m) => {
     setMode(m);
     setBeforeUrl(null);
@@ -1528,7 +1666,7 @@ function DanceGrowApp() {
       {screen === "roomSelect" && (
         <div className="screen room-select-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-14-c</p>
+          <p className="build-tag-top">build 2026-08-14-e</p>
           <p className="subtitle">どのおへやに入る？</p>
           <div className="door-list">
             {Object.keys(ANIMALS).map((k) => {
@@ -1547,6 +1685,7 @@ function DanceGrowApp() {
             })}
           </div>
           <SyncSettings currentCode={syncCode} onApply={applySyncCode} status={syncStatus} firebaseReady={firebaseReady} />
+          <BackupPanel getSnapshotJson={getSnapshotJson} onRestore={restoreFromSnapshot} />
           {!restoredAug13 && (
             <button className="restore-btn" onClick={restoreAug13Record}>
               🛠️ 8/13の記録（足あと＋7pt×3部屋）をもどす
@@ -1560,7 +1699,7 @@ function DanceGrowApp() {
           <button className="back-link" onClick={() => setScreen("roomSelect")}>
             ◀ おへやをかえる
           </button>
-          <div className="build-tag">build 2026-08-14-c</div>
+          <div className="build-tag">build 2026-08-14-e</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
@@ -1603,6 +1742,15 @@ function DanceGrowApp() {
                 <div className="health-fill" style={{ width: `${health}%`, background: health >= 65 ? "#35B192" : health >= 35 ? "#FFC94A" : "#E05555" }} />
               </div>
             </div>
+          </div>
+
+          <div className="snack-tracker">
+            🍖 おやつ {progress[animal]}こ
+            {STAGE_META[stageIdx + 1] && (
+              <span className="snack-tracker-next">
+                （つぎの成長まであと{STAGE_META[stageIdx + 1].min - progress[animal]}こ）
+              </span>
+            )}
           </div>
 
           {stageIdx >= 1 && !petNames[animal] && <PetNamer onNameSet={setPetName} />}
@@ -1818,7 +1966,7 @@ function DanceGrowApp() {
                 ▶ 動き出しから同時にさいせい
               </button>
               <div className="score-dial">{score}てん</div>
-              <div className={`result-char ${burst ? "bounce" : ""}`}>
+              <div className={`result-char ${burst ? "celebrate" : ""}`}>
                 <CharacterArt animal={animal} stageIdx={stageIdx} sizeMult={1.3} />
                 {burst && (
                   <div className="sparkle-burst">
@@ -1828,6 +1976,12 @@ function DanceGrowApp() {
                   </div>
                 )}
               </div>
+              {burst && (
+                <div className="celebration-toast">
+                  <div className="celebration-title">🎉 おめでとう！</div>
+                  <div className="celebration-sub">おやつ追加 🍖 +1</div>
+                </div>
+              )}
               {praiseMessage && <div className="speech-bubble praise-bubble">{praiseMessage}</div>}
               <p className="result-message">
                 {awarded ? "🎉 おやつタイム！すごい成長だね！" : "また明日もチャレンジしよう！"}
@@ -1924,6 +2078,8 @@ const GLOBAL_CSS = `
 .stat-box{flex:1;background:var(--card);border-radius:14px;padding:8px 10px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
 .stat-label{font-size:.65rem;color:#8a9690;}
 .stat-sublabel{font-size:.6rem;color:#8a9690;margin-top:-2px;}
+.snack-tracker{width:100%;background:var(--card);border-radius:14px;padding:8px 12px;font-size:.8rem;font-weight:700;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.snack-tracker-next{font-weight:500;color:#8a9690;font-size:.72rem;margin-left:4px;}
 .stat-value{font-weight:800;font-size:.9rem;}
 .health-bar{width:100%;height:10px;background:#eee;border-radius:999px;overflow:hidden;margin-top:4px;}
 .health-fill{height:100%;transition:width .3s;}
@@ -1982,10 +2138,21 @@ const GLOBAL_CSS = `
 .video-pair video{width:100%;border-radius:16px;background:#111;aspect-ratio:3/4;object-fit:contain;}
 .score-dial{font-size:2rem;font-weight:900;color:var(--coral);}
 .result-char{position:relative;}
-.result-char.bounce{animation:pop .5s ease;}
-@keyframes pop{0%{transform:scale(1);}40%{transform:scale(1.3);}100%{transform:scale(1);}}
+.result-char.celebrate{animation:joyMotion 1.1s ease;}
+@keyframes joyMotion{
+  0%{transform:scale(1) rotate(0deg) translateY(0);}
+  20%{transform:scale(1.25) rotate(-8deg) translateY(-12px);}
+  40%{transform:scale(1.1) rotate(8deg) translateY(-22px);}
+  60%{transform:scale(1.25) rotate(-6deg) translateY(-10px);}
+  80%{transform:scale(1.05) rotate(4deg) translateY(-4px);}
+  100%{transform:scale(1) rotate(0deg) translateY(0);}
+}
 .sparkle-burst{position:absolute;top:-10px;right:-30px;display:flex;gap:4px;font-size:1.3rem;animation:rise 1.8s ease forwards;}
 @keyframes rise{0%{transform:translateY(0);opacity:1;}100%{transform:translateY(-40px);opacity:0;}}
+.celebration-toast{background:linear-gradient(135deg,var(--sun),var(--coral));border-radius:16px;padding:10px 20px;text-align:center;color:#fff;box-shadow:0 6px 14px rgba(0,0,0,.15);animation:toastPop .5s ease;}
+.celebration-title{font-weight:900;font-size:1.05rem;}
+.celebration-sub{font-weight:700;font-size:.8rem;opacity:.95;}
+@keyframes toastPop{0%{transform:scale(.4);opacity:0;}60%{transform:scale(1.08);opacity:1;}100%{transform:scale(1);}}
 .result-message{font-weight:800;font-size:1rem;}
 .error-text{font-weight:700;color:#a53232;}
 
@@ -2031,6 +2198,7 @@ const GLOBAL_CSS = `
 .mic-btn{padding:12px;border:none;border-radius:16px;background:var(--sun);font-weight:800;cursor:pointer;}
 .mic-btn.listening{background:#E05555;color:white;}
 .reflection-textarea{width:100%;min-height:70px;border-radius:12px;border:1px solid #e0ddd3;padding:8px;font-family:inherit;font-size:.85rem;resize:vertical;}
+.backup-textarea{min-height:90px;font-size:.65rem;font-family:monospace;word-break:break-all;}
 
 /* 同時さいせいボタン */
 .sync-play-btn{width:100%;padding:12px;border:none;border-radius:16px;background:var(--teal);color:white;font-weight:800;font-size:.85rem;cursor:pointer;}
