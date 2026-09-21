@@ -1362,8 +1362,8 @@ function DanceGrowApp() {
   const [mirrored, setMirrored] = useState(true);
   const [editMode, setEditMode] = useState(false);
 
-  const [walletPoints, setWalletPoints] = useState(0);
-  const [progress, setProgress] = useState({ dog: 0, cat: 0, chick: 0 });
+  const [walletPoints, setWalletPoints] = useState(40);
+  const [progress, setProgress] = useState({ dog: 5, cat: 5, chick: 5 });
   const [decorations, setDecorations] = useState({ dog: [], cat: [], chick: [] });
   const [petNames, setPetNames] = useState({ dog: null, cat: null, chick: null });
   const [dirtiness, setDirtiness] = useState({ dog: 0, cat: 0, chick: 0 });
@@ -1411,8 +1411,8 @@ function DanceGrowApp() {
   const emptyDay = () => ({ normalMinutes: 0, cameraSessions: 0, cameraMinutes: 0, milestones: { m10: false, m30: false, m60: false }, entries: [] });
 
   const applyLoadedData = (s) => {
-    setWalletPoints(s.walletPoints || 0);
-    setProgress(s.progress || { dog: 0, cat: 0, chick: 0 });
+    setWalletPoints(s.walletPoints != null ? s.walletPoints : 40);
+    setProgress(s.progress || { dog: 5, cat: 5, chick: 5 });
     setDecorations(s.decorations || { dog: [], cat: [], chick: [] });
     setPetNames(s.petNames || { dog: null, cat: null, chick: null });
     setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
