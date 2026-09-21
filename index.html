@@ -13,30 +13,76 @@
 <div id="root"><div id="boot-msg">よみこみ中...</div></div>
 
 <script>
-  // 5秒たっても読み込みが終わらなければ、原因を画面に表示する
-  window.__bootTimeout = setTimeout(function () {
+  // どのライブラリの読み込みが終わっていないかを追跡する
+  window.__libStatus = {
+    "React本体": false,
+    "React-DOM": false,
+    "Babel(変換ツール)": false,
+    "Firebase(同期・基本)": false,
+    "Firebase(同期・データベース)": false
+  };
+  window.__libFailed = [];
+  window.__renderStarted = false;
+
+  function __markLoaded(name) {
+    window.__libStatus[name] = true;
+  }
+  function __markFailed(name) {
+    window.__libFailed.push(name);
+  }
+  function __showBootMessage(force) {
     var el = document.getElementById("boot-msg");
-    if (el) {
+    if (!el) return; // すでに本編が表示できている
+    if (window.__renderStarted && !force) return; // アプリの描画が始まっていれば何もしない
+
+    if (window.__libFailed.length > 0) {
+      el.textContent =
+        "読み込みに失敗しました。\n\n" +
+        "・失敗した項目: " + window.__libFailed.join("、") + "\n" +
+        "・電波/Wi-Fiが安定しているか確認して、もう一度この画面を開き直してください\n" +
+        "・それでも変わらない場合は、この画面のスクリーンショットを送ってください";
+      return;
+    }
+    var notYet = Object.keys(window.__libStatus).filter(function (k) { return !window.__libStatus[k]; });
+    if (notYet.length > 0) {
       el.textContent =
         "読み込みに時間がかかっています。\n\n" +
+        "・まだ準備できていない項目: " + notYet.join("、") + "\n" +
         "・電波/Wi-Fiが安定しているか確認してください\n" +
-        "・それでも変わらない場合は、この画面のスクリーンショットを送ってください\n\n" +
-        "(原因の手がかり: 外部ライブラリの読み込みに失敗している可能性があります)";
+        "・そのまましばらく待っても表示されない場合は、この画面のスクリーンショットを送ってください";
+    } else {
+      // 全部読み込めているのにまだ描画されていない → アプリ内部の処理が重い/固まっている
+      el.textContent =
+        "読み込みは完了していますが、表示の準備に時間がかかっています。\n\n" +
+        "・そのまま10〜20秒ほどお待ちください\n" +
+        "・変わらない場合は、この画面のスクリーンショットを送ってください";
     }
-  }, 6000);
-  window.addEventListener("error", function (e) {
-    var el = document.getElementById("boot-msg");
-    if (el) {
-      el.textContent = "エラーがおきました:\n" + (e.message || e.error || "不明なエラー");
-    }
-  });
+  }
+
+  // 最初の目安（8秒）でまだなら状況を表示。ここでは「失敗」とは断定しない
+  window.__bootTimeoutSoft = setTimeout(function () { __showBootMessage(false); }, 8000);
+  // 25秒たっても描画が始まらなければ、はっきり止まっていると判断して強制表示
+  window.__bootTimeoutHard = setTimeout(function () { __showBootMessage(true); }, 25000);
+
+  window.addEventListener(
+    "error",
+    function (e) {
+      var el = document.getElementById("boot-msg");
+      if (window.__renderStarted && (!el)) return; // 本編表示後の無害なエラーは無視
+      if (el) {
+        var detail = (e && e.message) ? e.message : (e && e.error) ? String(e.error) : "不明なエラー";
+        el.textContent = "エラーがおきました:\n" + detail;
+      }
+    },
+    true // キャプチャ段階で拾うことで、<script>の読み込み失敗も検知できるようにする
+  );
 </script>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" onload="__markLoaded('React本体')" onerror="__markFailed('React本体')"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" onload="__markLoaded('React-DOM')" onerror="__markFailed('React-DOM')"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" onload="__markLoaded('Babel(変換ツール)')" onerror="__markFailed('Babel(変換ツール)')"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" onload="__markLoaded('Firebase(同期・基本)')" onerror="__markFailed('Firebase(同期・基本)')"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" onload="__markLoaded('Firebase(同期・データベース)')" onerror="__markFailed('Firebase(同期・データベース)')"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
@@ -131,6 +177,8 @@ if (!window.storage) {
 
 
 /* ============ 動物の定義（品種・成長ステージごとの見た目） ============ */
+
+/* ============ 動物の定義（品種・成長ステージごとの見た目） ============ */
 const ANIMALS = {
   dog: {
     name: "トイプードル",
@@ -205,7 +253,8 @@ function buildPraise(animalKey, score) {
   return `${stem}${ending}！`;
 }
 
-const STORAGE_KEY = "dance-grow-character-v3";
+const STORAGE_KEY = "dance-grow-character-v4";
+const STORAGE_KEY_V3 = "dance-grow-character-v3";
 
 const ROOM_ITEMS = [
   { id: "mirror", name: "かがみ", emoji: "🪞", cost: 15 },
@@ -810,90 +859,6 @@ function RoomCharacter({ animal, totalSnacks, health, size = 1, wander = true })
     </div>
   );
 }
-
-/* ============ カレンダー ============ */
-function PracticeCalendar({ practiceLog, reflections = {}, animalKey }) {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const firstDay = new Date(year, month, 1);
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const startWeekday = firstDay.getDay();
-  const logSet = useMemo(() => new Set(practiceLog), [practiceLog]);
-  const cells = [];
-  for (let i = 0; i < startWeekday; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const monthLabel = `${year}年${month + 1}月`;
-  const todayDate = now.getDate();
-  const [selectedDate, setSelectedDate] = useState(null);
-
-  return (
-    <div className="calendar-card">
-      <div className="cal-title">📅 {monthLabel}のれんしゅうきろく</div>
-      <div className="cal-grid cal-head">
-        {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
-          <div key={w} className="cal-cell head">
-            {w}
-          </div>
-        ))}
-      </div>
-      <div className="cal-grid">
-        {cells.map((d, i) => {
-          if (d === null) return <div key={i} className="cal-cell empty" />;
-          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-          const done = logSet.has(dateStr);
-          const isToday = d === todayDate;
-          const dayEntries = reflections[dateStr];
-          const hasReflection = Array.isArray(dayEntries) ? dayEntries.length > 0 : !!dayEntries;
-          return (
-            <button
-              key={i}
-              className={`cal-cell cal-cell-btn ${done ? "done" : ""} ${isToday ? "today" : ""} ${selectedDate === dateStr ? "selected" : ""}`}
-              onClick={() => setSelectedDate(selectedDate === dateStr ? null : dateStr)}
-            >
-              <span className="cal-day-num">{d}</span>
-              {done && (
-                <span className={`cal-stamp cal-stamp-${animalKey}`} aria-hidden="true">
-                  🐾
-                </span>
-              )}
-              {hasReflection && <span className="cal-note-dot">📝</span>}
-            </button>
-          );
-        })}
-      </div>
-      <div className="cal-legend">🐾 = 練習した日　📝 = 反省ノートあり（日付をタップで確認）</div>
-      {selectedDate &&
-        (() => {
-          const raw = reflections[selectedDate];
-          const entries = Array.isArray(raw) ? raw : raw ? [typeof raw === "string" ? { full: raw, summary: raw } : raw] : [];
-          return (
-            <div className="cal-reflection-view">
-              <div className="cal-reflection-date">{selectedDate}のはんせい（{entries.length}けん）</div>
-              {entries.length === 0 && <div className="cal-reflection-text">この日はまだ反省ノートがないよ。</div>}
-              {entries.map((entry, idx) => (
-                <div key={idx} className="cal-reflection-entry">
-                  <div className="cal-reflection-text">
-                    {entries.length > 1 ? `${idx + 1}回目： ` : ""}
-                    {entry.summary}
-                  </div>
-                  {entry.full !== entry.summary && (
-                    <details className="cal-reflection-full">
-                      <summary>ぜんぶ見る</summary>
-                      <div className="cal-reflection-text">{entry.full}</div>
-                    </details>
-                  )}
-                </div>
-              ))}
-            </div>
-          );
-        })()}
-    </div>
-  );
-}
-
-/* ============ ペットに名前をつける ============ */
 function PetNamer({ onNameSet }) {
   const [value, setValue] = useState("");
   return (
@@ -1270,30 +1235,153 @@ function CameraRecorder({ label, mirrored, setMirrored, onCaptured }) {
 }
 
 /* ============ メインアプリ ============ */
+/* ============ 週の合計・月の合計を計算 ============ */
+function getWeekRange(baseDate) {
+  const d = new Date(baseDate);
+  const day = d.getDay(); // 0=日
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: monday, end: sunday };
+}
+function dateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function sumMinutesInRange(masterLog, start, end) {
+  let total = 0;
+  const cur = new Date(start);
+  while (cur <= end) {
+    const day = masterLog[dateKey(cur)];
+    if (day) total += (day.normalMinutes || 0) + (day.cameraMinutes || 0);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return Math.round(total);
+}
+
+/* ============ マスターカレンダー（全体の練習記録） ============ */
+function MasterCalendar({ masterLog }) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWeekday = firstDay.getDay();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const todayDate = now.getDate();
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  const { start: weekStart, end: weekEnd } = getWeekRange(now);
+  const weekTotal = sumMinutesInRange(masterLog, weekStart, weekEnd);
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month, daysInMonth);
+  const monthTotal = sumMinutesInRange(masterLog, monthStart, monthEnd);
+  const isTuesday = now.getDay() === 2;
+
+  return (
+    <div className="calendar-card">
+      <div className="cal-title">
+        📅 {year}年{month + 1}月のれんしゅうきろく
+      </div>
+      {isTuesday && (
+        <div className="week-banner">📊 今週(月〜日)のれんしゅう時間：合計 {weekTotal}分</div>
+      )}
+      <div className="cal-grid cal-head">
+        {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
+          <div key={w} className="cal-cell head">
+            {w}
+          </div>
+        ))}
+      </div>
+      <div className="cal-grid">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} className="cal-cell empty" />;
+          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const day = masterLog[dateStr];
+          const minutes = day ? Math.round((day.normalMinutes || 0) + (day.cameraMinutes || 0)) : 0;
+          const done = !!day && (minutes > 0 || (day.cameraSessions || 0) > 0);
+          const isToday = d === todayDate;
+          const hasEntries = day && day.entries && day.entries.length > 0;
+          return (
+            <button
+              key={i}
+              className={`cal-cell cal-cell-btn ${done ? "done" : ""} ${isToday ? "today" : ""} ${selectedDate === dateStr ? "selected" : ""}`}
+              onClick={() => setSelectedDate(selectedDate === dateStr ? null : dateStr)}
+            >
+              <span className="cal-day-num">{d}</span>
+              {done && <span className="cal-stamp">🐾</span>}
+              {minutes > 0 && <span className="cal-minutes">{minutes}分</span>}
+              {hasEntries && <span className="cal-note-dot">📝</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div className="cal-legend">🐾 = 練習した日　数字 = その日の合計時間　📝 = きろくあり（タップで確認）</div>
+      <div className="month-total-badge">🗓️ 今月の合計れんしゅう時間：{monthTotal}分</div>
+      {selectedDate &&
+        (() => {
+          const day = masterLog[selectedDate] || { normalMinutes: 0, cameraMinutes: 0, cameraSessions: 0, entries: [] };
+          const minutes = Math.round((day.normalMinutes || 0) + (day.cameraMinutes || 0));
+          return (
+            <div className="cal-reflection-view">
+              <div className="cal-reflection-date">{selectedDate}のきろく</div>
+              <div className="cal-reflection-text">
+                合計 {minutes}分（ノーマル練習 {Math.round(day.normalMinutes || 0)}分／カメラ練習 {day.cameraSessions || 0}回）
+              </div>
+              {(!day.entries || day.entries.length === 0) && <div className="cal-reflection-text">この日のメモ・反省ノートはまだないよ。</div>}
+              {(day.entries || []).map((entry, idx) => (
+                <div key={idx} className="cal-reflection-entry">
+                  <div className="cal-reflection-text">
+                    {entry.type === "note" ? "✏️ " : "🎤 "}
+                    {entry.summary}
+                  </div>
+                  {entry.full !== entry.summary && (
+                    <details className="cal-reflection-full">
+                      <summary>ぜんぶ見る</summary>
+                      <div className="cal-reflection-text">{entry.full}</div>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+    </div>
+  );
+}
+
+/* ============ メインアプリ ============ */
 function DanceGrowApp() {
   const [loaded, setLoaded] = useState(false);
-  const [animal, setAnimal] = useState(null); // null = 部屋選択画面
-  const [progress, setProgress] = useState({ dog: 0, cat: 0, chick: 0 });
-  const [streaks, setStreaks] = useState({ dog: 0, cat: 0, chick: 0 });
-  const [lastDates, setLastDates] = useState({ dog: null, cat: null, chick: null });
-  const [practiceLogs, setPracticeLogs] = useState({ dog: [], cat: [], chick: [] });
-  const [roomPointsMap, setRoomPointsMap] = useState({ dog: 0, cat: 0, chick: 0 });
-  const [decorations, setDecorations] = useState({ dog: [], cat: [], chick: [] });
-  const [reflectionsMap, setReflectionsMap] = useState({ dog: {}, cat: {}, chick: {} }); // {animal: {date: [entries]}}
-  const [petNames, setPetNames] = useState({ dog: null, cat: null, chick: null });
-  const [dirtiness, setDirtiness] = useState({ dog: 0, cat: 0, chick: 0 });
-  const [restoredAug13, setRestoredAug13] = useState(false);
-  const [lastDirtCheck, setLastDirtCheck] = useState({ dog: null, cat: null, chick: null });
-  const leftVideoRef = useRef(null);
-  const rightVideoRef = useRef(null);
-  const [leftAspect, setLeftAspect] = useState(null);
-  const [rightAspect, setRightAspect] = useState(null);
-
-  const [screen, setScreen] = useState("roomSelect");
+  const [screen, setScreen] = useState("home");
+  const [animal, setAnimal] = useState(null);
   const [mode, setMode] = useState("self");
   const [mirrored, setMirrored] = useState(true);
   const [editMode, setEditMode] = useState(false);
 
+  const [walletPoints, setWalletPoints] = useState(0);
+  const [progress, setProgress] = useState({ dog: 0, cat: 0, chick: 0 });
+  const [decorations, setDecorations] = useState({ dog: [], cat: [], chick: [] });
+  const [petNames, setPetNames] = useState({ dog: null, cat: null, chick: null });
+  const [dirtiness, setDirtiness] = useState({ dog: 0, cat: 0, chick: 0 });
+  const [lastDirtCheck, setLastDirtCheck] = useState(null);
+
+  const [masterLog, setMasterLog] = useState({});
+  const [lastPracticeDate, setLastPracticeDate] = useState(null);
+  const [streak, setStreak] = useState(0);
+
+  // ノーマル練習（ストップウォッチ）
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const timerIntervalRef = useRef(null);
+  const [pendingMinutes, setPendingMinutes] = useState(0);
+  const [pendingAwarded, setPendingAwarded] = useState(0);
+  const [normalNote, setNormalNote] = useState("");
+
+  // カメラ練習
   const [beforeUrl, setBeforeUrl] = useState(null);
   const [afterUrl, setAfterUrl] = useState(null);
   const [teacherUrl, setTeacherUrl] = useState(null);
@@ -1305,51 +1393,101 @@ function DanceGrowApp() {
   const teacherVideoRef = useRef(null);
   const [teacherConfirming, setTeacherConfirming] = useState(false);
   const [teacherConfirmError, setTeacherConfirmError] = useState(null);
-
   const [elapsed, setElapsed] = useState(0);
   const [cheer, setCheer] = useState(CHEERS[0]);
   const [score, setScore] = useState(null);
-  const [awarded, setAwarded] = useState(false);
-  const [praiseMessage, setPraiseMessage] = useState("");
   const [burst, setBurst] = useState(false);
   const [error, setError] = useState(null);
+  const [praiseMessage, setPraiseMessage] = useState("");
+  const [praiseAnimal, setPraiseAnimal] = useState("dog");
+  const leftVideoRef = useRef(null);
+  const rightVideoRef = useRef(null);
+  const [leftAspect, setLeftAspect] = useState(null);
+  const [rightAspect, setRightAspect] = useState(null);
 
   const [syncCode, setSyncCode] = useState("");
   const [syncStatus, setSyncStatus] = useState(null);
+
+  const emptyDay = () => ({ normalMinutes: 0, cameraSessions: 0, cameraMinutes: 0, milestones: { m10: false, m30: false, m60: false }, entries: [] });
+
+  const applyLoadedData = (s) => {
+    setWalletPoints(s.walletPoints || 0);
+    setProgress(s.progress || { dog: 0, cat: 0, chick: 0 });
+    setDecorations(s.decorations || { dog: [], cat: [], chick: [] });
+    setPetNames(s.petNames || { dog: null, cat: null, chick: null });
+    setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
+    setLastDirtCheck(s.lastDirtCheck || null);
+    setMasterLog(s.masterLog || {});
+    setLastPracticeDate(s.lastPracticeDate || null);
+    setStreak(s.streak || 0);
+  };
+
+  const migrateFromV3 = async () => {
+    try {
+      const res = await window.storage.get(STORAGE_KEY_V3, false);
+      if (!res?.value) return null;
+      const old = JSON.parse(res.value);
+      const animals = ["dog", "cat", "chick"];
+      let wallet = 0;
+      animals.forEach((k) => (wallet += old.roomPointsMap?.[k] || 0));
+      const ml = {};
+      animals.forEach((k) => {
+        (old.practiceLogs?.[k] || []).forEach((date) => {
+          if (!ml[date]) ml[date] = emptyDay();
+          ml[date].cameraSessions += 1;
+          ml[date].milestones = { m10: true, m30: true, m60: true };
+        });
+        const refl = old.reflectionsMap?.[k] || {};
+        Object.keys(refl).forEach((date) => {
+          if (!ml[date]) ml[date] = emptyDay();
+          const arr = Array.isArray(refl[date]) ? refl[date] : [refl[date]];
+          arr.forEach((e) => {
+            const entry = typeof e === "string" ? { full: e, summary: e } : e;
+            ml[date].entries.push({ type: "reflection", full: entry.full, summary: entry.summary, time: entry.time || date });
+          });
+        });
+      });
+      let lastDate = null;
+      animals.forEach((k) => {
+        if (old.lastDates?.[k] && (!lastDate || old.lastDates[k] > lastDate)) lastDate = old.lastDates[k];
+      });
+      let maxStreak = 0;
+      animals.forEach((k) => {
+        maxStreak = Math.max(maxStreak, old.streaks?.[k] || 0);
+      });
+      return {
+        walletPoints: wallet,
+        progress: old.progress || { dog: 0, cat: 0, chick: 0 },
+        decorations: old.decorations || { dog: [], cat: [], chick: [] },
+        petNames: old.petNames || { dog: null, cat: null, chick: null },
+        dirtiness: { dog: 0, cat: 0, chick: 0 },
+        lastDirtCheck: null,
+        masterLog: ml,
+        lastPracticeDate: lastDate,
+        streak: maxStreak,
+      };
+    } catch {
+      return null;
+    }
+  };
 
   const reloadAllData = useCallback(async () => {
     setLoaded(false);
     try {
       const res = await window.storage.get(STORAGE_KEY, false);
       if (res?.value) {
-        const s = JSON.parse(res.value);
-        setProgress(s.progress || { dog: 0, cat: 0, chick: 0 });
-        setStreaks(s.streaks || { dog: 0, cat: 0, chick: 0 });
-        setLastDates(s.lastDates || { dog: null, cat: null, chick: null });
-        setPracticeLogs(s.practiceLogs || { dog: [], cat: [], chick: [] });
-        setRoomPointsMap(s.roomPointsMap || { dog: 0, cat: 0, chick: 0 });
-        setDecorations(s.decorations || { dog: [], cat: [], chick: [] });
-        setReflectionsMap(s.reflectionsMap || { dog: {}, cat: {}, chick: {} });
-        setPetNames(s.petNames || { dog: null, cat: null, chick: null });
-        setDirtiness(s.dirtiness || { dog: 0, cat: 0, chick: 0 });
-        setLastDirtCheck(s.lastDirtCheck || { dog: null, cat: null, chick: null });
-        setRestoredAug13(!!s.restoredAug13);
+        applyLoadedData(JSON.parse(res.value));
       } else {
-        // 同期コードを切り替えた先にまだデータがない場合は空の状態にする
-        setProgress({ dog: 0, cat: 0, chick: 0 });
-        setStreaks({ dog: 0, cat: 0, chick: 0 });
-        setLastDates({ dog: null, cat: null, chick: null });
-        setPracticeLogs({ dog: [], cat: [], chick: [] });
-        setRoomPointsMap({ dog: 0, cat: 0, chick: 0 });
-        setDecorations({ dog: [], cat: [], chick: [] });
-        setReflectionsMap({ dog: {}, cat: {}, chick: {} });
-        setPetNames({ dog: null, cat: null, chick: null });
-        setDirtiness({ dog: 0, cat: 0, chick: 0 });
-        setLastDirtCheck({ dog: null, cat: null, chick: null });
-        setRestoredAug13(false);
+        const migrated = await migrateFromV3();
+        if (migrated) {
+          applyLoadedData(migrated);
+          await window.storage.set(STORAGE_KEY, JSON.stringify(migrated), false);
+        } else {
+          applyLoadedData({});
+        }
       }
     } catch {
-      // 初回は何もない（エラーでも空の状態のまま進める）
+      applyLoadedData({});
     } finally {
       setLoaded(true);
     }
@@ -1358,7 +1496,33 @@ function DanceGrowApp() {
   useEffect(() => {
     setSyncCode(getSyncCode());
     reloadAllData();
-  }, [reloadAllData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const persist = useCallback(
+    async (next) => {
+      try {
+        await window.storage.set(
+          STORAGE_KEY,
+          JSON.stringify({
+            walletPoints: next.walletPoints ?? walletPoints,
+            progress: next.progress ?? progress,
+            decorations: next.decorations ?? decorations,
+            petNames: next.petNames ?? petNames,
+            dirtiness: next.dirtiness ?? dirtiness,
+            lastDirtCheck: next.lastDirtCheck ?? lastDirtCheck,
+            masterLog: next.masterLog ?? masterLog,
+            lastPracticeDate: next.lastPracticeDate ?? lastPracticeDate,
+            streak: next.streak ?? streak,
+          }),
+          false
+        );
+      } catch {
+        /* 保存に失敗しても遊べる */
+      }
+    },
+    [walletPoints, progress, decorations, petNames, dirtiness, lastDirtCheck, masterLog, lastPracticeDate, streak]
+  );
 
   const applySyncCode = async (code) => {
     setSyncCodeLocal(code);
@@ -1368,62 +1532,86 @@ function DanceGrowApp() {
     setSyncStatus(firebaseReady ? "どうき完了！このコードを他の端末にも入力してね" : null);
   };
 
-  const persist = useCallback(
-    async (next) => {
-      try {
-        await window.storage.set(
-          STORAGE_KEY,
-          JSON.stringify({
-            progress: next.progress ?? progress,
-            streaks: next.streaks ?? streaks,
-            lastDates: next.lastDates ?? lastDates,
-            practiceLogs: next.practiceLogs ?? practiceLogs,
-            roomPointsMap: next.roomPointsMap ?? roomPointsMap,
-            decorations: next.decorations ?? decorations,
-            reflectionsMap: next.reflectionsMap ?? reflectionsMap,
-            petNames: next.petNames ?? petNames,
-            dirtiness: next.dirtiness ?? dirtiness,
-            lastDirtCheck: next.lastDirtCheck ?? lastDirtCheck,
-            restoredAug13: next.restoredAug13 ?? restoredAug13,
-          }),
-          false
-        );
-      } catch {
-        // 保存に失敗しても遊べる
-      }
-    },
-    [progress, streaks, lastDates, practiceLogs, roomPointsMap, decorations, reflectionsMap, petNames, dirtiness, lastDirtCheck, restoredAug13]
-  );
+  const getSnapshotJson = () =>
+    JSON.stringify(
+      { walletPoints, progress, decorations, petNames, dirtiness, lastDirtCheck, masterLog, lastPracticeDate, streak, _backupAt: new Date().toISOString() },
+      null,
+      0
+    );
 
-  useEffect(() => {
-    if (screen !== "timer") return;
-    const t1 = setInterval(() => setElapsed((e) => e + 1), 1000);
-    const t2 = setInterval(() => setCheer(CHEERS[Math.floor(Math.random() * CHEERS.length)]), 3500);
-    return () => {
-      clearInterval(t1);
-      clearInterval(t2);
+  const restoreFromSnapshot = (s) => {
+    const next = {
+      walletPoints: s.walletPoints || 0,
+      progress: s.progress || { dog: 0, cat: 0, chick: 0 },
+      decorations: s.decorations || { dog: [], cat: [], chick: [] },
+      petNames: s.petNames || { dog: null, cat: null, chick: null },
+      dirtiness: s.dirtiness || { dog: 0, cat: 0, chick: 0 },
+      lastDirtCheck: s.lastDirtCheck || null,
+      masterLog: s.masterLog || {},
+      lastPracticeDate: s.lastPracticeDate || null,
+      streak: s.streak || 0,
     };
-  }, [screen]);
+    applyLoadedData(next);
+    persist(next);
+  };
 
-  const enterRoom = (a) => {
-    setAnimal(a);
-    setScreen("hub");
+  // 練習した日の記録・れんぞく記録を更新する共通処理
+  const registerPracticeDay = (today) => {
+    let newStreak = streak;
+    if (lastPracticeDate !== today) {
+      newStreak = lastPracticeDate === todayStr(-1) ? streak + 1 : 1;
+    }
+    setStreak(newStreak);
+    setLastPracticeDate(today);
+    return newStreak;
+  };
+
+  // げんき度が低いまま1日経つと、うんちが3部屋いっしょに1つずつ増える
+  useEffect(() => {
+    if (!loaded) return;
+    const today = todayStr();
+    if (lastDirtCheck === today) return;
+    const h = calcHealth(lastPracticeDate);
+    const newLastDirtCheck = today;
+    if (h < 35) {
+      const newDirtiness = {
+        dog: Math.min(5, dirtiness.dog + 1),
+        cat: Math.min(5, dirtiness.cat + 1),
+        chick: Math.min(5, dirtiness.chick + 1),
+      };
+      setDirtiness(newDirtiness);
+      setLastDirtCheck(newLastDirtCheck);
+      persist({ dirtiness: newDirtiness, lastDirtCheck: newLastDirtCheck });
+    } else {
+      setLastDirtCheck(newLastDirtCheck);
+      persist({ lastDirtCheck: newLastDirtCheck });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
+  const cleanRoom = (a) => {
+    const CLEAN_COST = 2;
+    if (dirtiness[a] <= 0 || walletPoints < CLEAN_COST) return;
+    const newDirtiness = { ...dirtiness, [a]: 0 };
+    const newWallet = walletPoints - CLEAN_COST;
+    setDirtiness(newDirtiness);
+    setWalletPoints(newWallet);
+    persist({ dirtiness: newDirtiness, walletPoints: newWallet });
   };
 
   const buyItem = (itemId) => {
     const item = ROOM_ITEMS.find((i) => i.id === itemId);
     if (!item || !animal) return;
     const ownedIds = decorations[animal].map((d) => d.id);
-    const currentPoints = roomPointsMap[animal];
-    if (ownedIds.includes(itemId) || currentPoints < item.cost) return;
+    if (ownedIds.includes(itemId) || walletPoints < item.cost) return;
     const count = decorations[animal].length;
     const x = 15 + (count % 4) * 20;
     const y = 22 + Math.floor(count / 4) * 24;
     const newDecorations = { ...decorations, [animal]: [...decorations[animal], { id: itemId, x, y }] };
-    const newRoomPointsMap = { ...roomPointsMap, [animal]: currentPoints - item.cost };
+    const newWallet = walletPoints - item.cost;
     setDecorations(newDecorations);
-    setRoomPointsMap(newRoomPointsMap);
-    persist({ decorations: newDecorations, roomPointsMap: newRoomPointsMap });
+    setWalletPoints(newWallet);
+    persist({ decorations: newDecorations, walletPoints: newWallet });
   };
 
   const moveItem = (itemId, x, y) => {
@@ -1434,21 +1622,6 @@ function DanceGrowApp() {
     persist({ decorations: newDecorations });
   };
 
-  const saveReflection = (text) => {
-    if (!animal) return;
-    const today = todayStr();
-    const animalReflections = reflectionsMap[animal] || {};
-    const dayEntries = animalReflections[today] || [];
-    const isFirstToday = dayEntries.length === 0;
-    const entry = { time: new Date().toISOString(), full: text, summary: summarizeText(text) };
-    const newAnimalReflections = { ...animalReflections, [today]: [...dayEntries, entry] };
-    const newReflectionsMap = { ...reflectionsMap, [animal]: newAnimalReflections };
-    const newRoomPointsMap = isFirstToday ? { ...roomPointsMap, [animal]: roomPointsMap[animal] + 2 } : roomPointsMap;
-    setReflectionsMap(newReflectionsMap);
-    if (isFirstToday) setRoomPointsMap(newRoomPointsMap);
-    persist({ reflectionsMap: newReflectionsMap, roomPointsMap: newRoomPointsMap });
-  };
-
   const setPetName = (name) => {
     if (!animal) return;
     const newNames = { ...petNames, [animal]: name };
@@ -1456,122 +1629,98 @@ function DanceGrowApp() {
     persist({ petNames: newNames });
   };
 
-  const DIRT_THRESHOLD_HEALTH = 35; // ふきげん(😾)以下になるとうんちが出る
-  const MAX_DIRT = 5;
+  const [feedBurst, setFeedBurst] = useState(false);
+  const feedPet = (a) => {
+    if (walletPoints < 1) return;
+    const newProgress = { ...progress, [a]: progress[a] + 1 };
+    const newWallet = walletPoints - 1;
+    setProgress(newProgress);
+    setWalletPoints(newWallet);
+    persist({ progress: newProgress, walletPoints: newWallet });
+    setFeedBurst(true);
+    setTimeout(() => setFeedBurst(false), 1200);
+  };
 
-  // げんき度が低いまま1日経つと、うんちが1つ増える（1日1回だけ判定）
-  useEffect(() => {
-    if (!loaded || !animal) return;
-    const today = todayStr();
-    if (lastDirtCheck[animal] === today) return;
-    const h = calcHealth(lastDates[animal]);
-    if (h < DIRT_THRESHOLD_HEALTH) {
-      const newDirtiness = { ...dirtiness, [animal]: Math.min(MAX_DIRT, dirtiness[animal] + 1) };
-      const newLastDirtCheck = { ...lastDirtCheck, [animal]: today };
-      setDirtiness(newDirtiness);
-      setLastDirtCheck(newLastDirtCheck);
-      persist({ dirtiness: newDirtiness, lastDirtCheck: newLastDirtCheck });
+  /* ============ ノーマル練習（ストップウォッチ） ============ */
+  const startNormalPractice = () => {
+    setTimerSeconds(0);
+    setTimerRunning(true);
+    setScreen("normalTimer");
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = setInterval(() => setTimerSeconds((s) => s + 1), 1000);
+  };
+  const pauseResumeTimer = () => {
+    if (timerRunning) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+      setTimerRunning(false);
     } else {
-      const newLastDirtCheck = { ...lastDirtCheck, [animal]: today };
-      setLastDirtCheck(newLastDirtCheck);
-      persist({ lastDirtCheck: newLastDirtCheck });
+      setTimerRunning(true);
+      timerIntervalRef.current = setInterval(() => setTimerSeconds((s) => s + 1), 1000);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, animal]);
+  };
+  const endNormalTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    setTimerRunning(false);
+    const minutes = timerSeconds / 60;
+    setPendingMinutes(minutes);
 
-  const cleanRoom = () => {
-    if (!animal) return;
-    const CLEAN_COST = 2;
-    if (dirtiness[animal] <= 0 || roomPointsMap[animal] < CLEAN_COST) return;
-    const newDirtiness = { ...dirtiness, [animal]: 0 };
-    const newRoomPointsMap = { ...roomPointsMap, [animal]: roomPointsMap[animal] - CLEAN_COST };
-    setDirtiness(newDirtiness);
-    setRoomPointsMap(newRoomPointsMap);
-    persist({ dirtiness: newDirtiness, roomPointsMap: newRoomPointsMap });
+    const today = todayStr();
+    const day = masterLog[today] || emptyDay();
+    const newTotal = (day.normalMinutes || 0) + minutes;
+    const thresholds = [
+      { key: "m10", min: 10, reward: 1 },
+      { key: "m30", min: 30, reward: 2 },
+      { key: "m60", min: 60, reward: 3 },
+    ];
+    let awarded = 0;
+    const newMilestones = { ...day.milestones };
+    thresholds.forEach((t) => {
+      if (!newMilestones[t.key] && newTotal >= t.min) {
+        newMilestones[t.key] = true;
+        awarded += t.reward;
+      }
+    });
+    setPendingAwarded(awarded);
+    setNormalNote("");
+    // 実際の反映はメモ画面の確定時にまとめて行う（下書き状態としてここでは保持のみ）
+    window.__pendingNormalDay = { today, day, newTotal, newMilestones, awarded };
+    setScreen("normalMemo");
+  };
+  const confirmNormalMemo = (note) => {
+    const pending = window.__pendingNormalDay;
+    if (!pending) {
+      setScreen("home");
+      return;
+    }
+    const { today, day, newTotal, newMilestones, awarded } = pending;
+    const newEntries = note && note.trim() ? [...day.entries, { type: "note", full: note.trim(), summary: summarizeText(note.trim()), time: new Date().toISOString() }] : day.entries;
+    const newDay = { ...day, normalMinutes: newTotal, milestones: newMilestones, entries: newEntries };
+    const newMasterLog = { ...masterLog, [today]: newDay };
+    const newWallet = walletPoints + awarded;
+    const newStreak = registerPracticeDay(today);
+    setMasterLog(newMasterLog);
+    setWalletPoints(newWallet);
+    persist({ masterLog: newMasterLog, walletPoints: newWallet, lastPracticeDate: today, streak: newStreak });
+    window.__pendingNormalDay = null;
+    setScreen("home");
   };
 
-  // 2026-08-13にクラウド同期の設定作業中にデータが消えてしまった分を、
-  // 3部屋ぶんまとめて一度だけ復元するための特別対応（一度使うと消える）
-  const restoreAug13Record = () => {
-    const targetDate = "2026-08-13";
-    const animals = ["dog", "cat", "chick"];
-    const newPracticeLogs = { ...practiceLogs };
-    const newRoomPointsMap = { ...roomPointsMap };
-    const newLastDates = { ...lastDates };
-    const newStreaks = { ...streaks };
-    animals.forEach((k) => {
-      if (!newPracticeLogs[k].includes(targetDate)) {
-        newPracticeLogs[k] = [...newPracticeLogs[k], targetDate].sort();
-      }
-      newRoomPointsMap[k] = (newRoomPointsMap[k] || 0) + 7;
-      if (!newLastDates[k] || newLastDates[k] < targetDate) {
-        newLastDates[k] = targetDate;
-      }
-      if (!newStreaks[k]) newStreaks[k] = 1;
-    });
-    setPracticeLogs(newPracticeLogs);
-    setRoomPointsMap(newRoomPointsMap);
-    setLastDates(newLastDates);
-    setStreaks(newStreaks);
-    setRestoredAug13(true);
-    persist({
-      practiceLogs: newPracticeLogs,
-      roomPointsMap: newRoomPointsMap,
-      lastDates: newLastDates,
-      streaks: newStreaks,
-      restoredAug13: true,
-    });
-  };
-
-  const getSnapshotJson = () =>
-    JSON.stringify(
-      {
-        progress,
-        streaks,
-        lastDates,
-        practiceLogs,
-        roomPointsMap,
-        decorations,
-        reflectionsMap,
-        petNames,
-        dirtiness,
-        lastDirtCheck,
-        restoredAug13,
-        _backupAt: new Date().toISOString(),
-      },
-      null,
-      0
-    );
-
-  const restoreFromSnapshot = (s) => {
-    const next = {
-      progress: s.progress || { dog: 0, cat: 0, chick: 0 },
-      streaks: s.streaks || { dog: 0, cat: 0, chick: 0 },
-      lastDates: s.lastDates || { dog: null, cat: null, chick: null },
-      practiceLogs: s.practiceLogs || { dog: [], cat: [], chick: [] },
-      roomPointsMap: s.roomPointsMap || { dog: 0, cat: 0, chick: 0 },
-      decorations: s.decorations || { dog: [], cat: [], chick: [] },
-      reflectionsMap: s.reflectionsMap || { dog: {}, cat: {}, chick: {} },
-      petNames: s.petNames || { dog: null, cat: null, chick: null },
-      dirtiness: s.dirtiness || { dog: 0, cat: 0, chick: 0 },
-      lastDirtCheck: s.lastDirtCheck || { dog: null, cat: null, chick: null },
-      restoredAug13: !!s.restoredAug13,
+  /* ============ カメラ練習 ============ */
+  useEffect(() => {
+    if (screen !== "timer") return;
+    const t1 = setInterval(() => setElapsed((e) => e + 1), 1000);
+    const t2 = setInterval(() => setCheer(CHEERS[Math.floor(Math.random() * CHEERS.length)]), 3500);
+    return () => {
+      clearInterval(t1);
+      clearInterval(t2);
     };
-    setProgress(next.progress);
-    setStreaks(next.streaks);
-    setLastDates(next.lastDates);
-    setPracticeLogs(next.practiceLogs);
-    setRoomPointsMap(next.roomPointsMap);
-    setDecorations(next.decorations);
-    setReflectionsMap(next.reflectionsMap);
-    setPetNames(next.petNames);
-    setDirtiness(next.dirtiness);
-    setLastDirtCheck(next.lastDirtCheck);
-    setRestoredAug13(next.restoredAug13);
-    persist(next);
-  };
+  }, [screen]);
 
-  const startFlow = (m) => {
+  const startCameraFlow = (m) => {
     setMode(m);
     setBeforeUrl(null);
     setAfterUrl(null);
@@ -1582,7 +1731,6 @@ function DanceGrowApp() {
     setTeacherCurve(null);
     setOwnCurve(null);
     setScore(null);
-    setAwarded(false);
     setBurst(false);
     setError(null);
     setElapsed(0);
@@ -1601,47 +1749,43 @@ function DanceGrowApp() {
         s = compareToTeacher(curves.own.curve, curves.teacher.curve);
       }
       setScore(s);
-      const success = s >= 60;
-      setAwarded(success);
-      setPraiseMessage(buildPraise(animal, s));
+      const randomAnimal = ["dog", "cat", "chick"][Math.floor(Math.random() * 3)];
+      setPraiseAnimal(randomAnimal);
+      setPraiseMessage(buildPraise(randomAnimal, s));
 
       const today = todayStr();
-      const prevStreak = streaks[animal];
-      const prevLastDate = lastDates[animal];
-      let newStreak = prevStreak;
-      if (prevLastDate !== today) {
-        newStreak = prevLastDate === todayStr(-1) ? prevStreak + 1 : 1;
-      }
-      const newProgress = { ...progress, [animal]: progress[animal] + (success ? 1 : 0) };
-      const isNewDay = !practiceLogs[animal].includes(today);
-      const newLog = isNewDay ? [...practiceLogs[animal], today].slice(-90) : practiceLogs[animal];
-      const newRoomPointsMap = isNewDay ? { ...roomPointsMap, [animal]: roomPointsMap[animal] + 5 } : roomPointsMap;
-      const newStreaks = { ...streaks, [animal]: newStreak };
-      const newLastDates = { ...lastDates, [animal]: today };
-      const newPracticeLogs = { ...practiceLogs, [animal]: newLog };
+      const day = masterLog[today] || emptyDay();
+      const newDay = {
+        ...day,
+        cameraSessions: (day.cameraSessions || 0) + 1,
+        cameraMinutes: (day.cameraMinutes || 0) + elapsed / 60,
+      };
+      const newMasterLog = { ...masterLog, [today]: newDay };
+      const CAMERA_REWARD = 3;
+      const newWallet = walletPoints + CAMERA_REWARD;
+      const newStreak = registerPracticeDay(today);
 
-      setStreaks(newStreaks);
-      setLastDates(newLastDates);
-      setProgress(newProgress);
-      setPracticeLogs(newPracticeLogs);
-      setRoomPointsMap(newRoomPointsMap);
-      persist({
-        streaks: newStreaks,
-        lastDates: newLastDates,
-        progress: newProgress,
-        practiceLogs: newPracticeLogs,
-        roomPointsMap: newRoomPointsMap,
-      });
+      setMasterLog(newMasterLog);
+      setWalletPoints(newWallet);
+      persist({ masterLog: newMasterLog, walletPoints: newWallet, lastPracticeDate: today, streak: newStreak });
 
       setScreen("result");
-      if (success) {
-        setTimeout(() => setBurst(true), 300);
-        setTimeout(() => setBurst(false), 2200);
-      }
+      setTimeout(() => setBurst(true), 300);
+      setTimeout(() => setBurst(false), 2200);
     } catch (e) {
       setError("うまく比べられなかったよ。もう一度ためしてね。（" + (e?.message || "不明なエラー") + "）");
       setScreen("result");
     }
+  };
+
+  const saveReflection = (text) => {
+    const today = todayStr();
+    const day = masterLog[today] || emptyDay();
+    const entry = { type: "reflection", full: text, summary: summarizeText(text), time: new Date().toISOString() };
+    const newDay = { ...day, entries: [...day.entries, entry] };
+    const newMasterLog = { ...masterLog, [today]: newDay };
+    setMasterLog(newMasterLog);
+    persist({ masterLog: newMasterLog });
   };
 
   if (!loaded) {
@@ -1654,59 +1798,86 @@ function DanceGrowApp() {
     );
   }
 
-  const health = animal ? calcHealth(lastDates[animal]) : 75;
-  const tier = animal ? healthTier(health) : null;
+  const health = calcHealth(lastPracticeDate);
+  const tier = healthTier(health);
   const a = animal ? ANIMALS[animal] : null;
   const stageIdx = animal ? (animal === "chick" ? Math.min(getStageIndex(progress[animal]), 3) : getStageIndex(progress[animal])) : 0;
+  const todayEntryCount = (masterLog[todayStr()]?.entries || []).length;
 
   return (
     <div className="app-root">
       <style>{GLOBAL_CSS}</style>
 
-      {screen === "roomSelect" && (
-        <div className="screen room-select-screen">
+      {screen === "home" && (
+        <div className="screen home-screen">
           <h1 className="title">コツコツダンスペット</h1>
-          <p className="build-tag-top">build 2026-08-14-e</p>
-          <p className="subtitle">どのおへやに入る？</p>
-          <div className="door-list">
+          <p className="build-tag-top">build 2026-08-14-f</p>
+          <div className="wallet-badge">
+            🍖 ポイント: {walletPoints}　{streak > 0 && <span>🔥 {streak}日れんぞく</span>}
+          </div>
+
+          <MasterCalendar masterLog={masterLog} />
+
+          <div className="menu-row">
+            <button className="menu-card" onClick={startNormalPractice}>
+              🧘‍♀️
+              <div>ノーマル練習</div>
+              <span className="menu-card-sub">ストレッチ・体幹・ふり覚えなど</span>
+            </button>
+            <button
+              className="menu-card camera"
+              onClick={() => setScreen("cameraMode")}
+            >
+              🎥
+              <div>カメラ練習</div>
+              <span className="menu-card-sub">動画をとって比べる（+3pt）</span>
+            </button>
+          </div>
+
+          <div className="rooms-row-label">おへや</div>
+          <div className="rooms-row">
             {Object.keys(ANIMALS).map((k) => {
               const stIdx = Math.min(getStageIndex(progress[k]), 3);
-              const st = STAGE_META[stIdx];
               return (
-                <button key={k} className="door-card" style={{ background: ANIMALS[k].roomBg }} onClick={() => enterRoom(k)}>
-                  <div className="door-emoji wander-mini">
-                    <CharacterArt animal={k} stageIdx={stIdx} sizeMult={1} />
-                  </div>
-                  <div className="door-name">{petNames[k] ? `${petNames[k]}のへや` : `${ANIMALS[k].name}のへや`}</div>
-                  <div className="door-stage">{st.label}</div>
-                  <div className="door-enter">入る ▶</div>
+                <button
+                  key={k}
+                  className="room-mini-card"
+                  style={{ background: ANIMALS[k].roomBg }}
+                  onClick={() => {
+                    setAnimal(k);
+                    setScreen("room");
+                  }}
+                >
+                  <CharacterArt animal={k} stageIdx={stIdx} sizeMult={0.8} />
+                  <div className="room-mini-name">{petNames[k] || ANIMALS[k].name}</div>
+                  {dirtiness[k] > 0 && <span className="room-mini-mess">💩{dirtiness[k]}</span>}
                 </button>
               );
             })}
           </div>
+
           <SyncSettings currentCode={syncCode} onApply={applySyncCode} status={syncStatus} firebaseReady={firebaseReady} />
           <BackupPanel getSnapshotJson={getSnapshotJson} onRestore={restoreFromSnapshot} />
-          {!restoredAug13 && (
-            <button className="restore-btn" onClick={restoreAug13Record}>
-              🛠️ 8/13の記録（足あと＋7pt×3部屋）をもどす
-            </button>
-          )}
         </div>
       )}
 
-      {screen === "hub" && animal && (
+      {screen === "room" && animal && (
         <div className="screen hub-screen">
-          <button className="back-link" onClick={() => setScreen("roomSelect")}>
-            ◀ おへやをかえる
+          <button className="back-link" onClick={() => setScreen("home")}>
+            ◀ ホームにもどる
           </button>
-          <div className="build-tag">build 2026-08-14-e</div>
 
           <div className="room-view" style={{ background: a.roomBg }}>
             <div className="room-floor" style={{ background: a.floor }} />
             <RoomDecorations owned={decorations[animal]} editable={editMode} onDragEnd={moveItem} />
             <RoomMess count={dirtiness[animal]} />
-            {streaks[animal] > 0 && <div className="streak-badge">🔥 {streaks[animal]}日れんぞく</div>}
             <RoomCharacter animal={animal} totalSnacks={progress[animal]} health={health} size={1.3} wander={!editMode} />
+            {feedBurst && (
+              <div className="sparkle-burst" style={{ right: "40%" }}>
+                <span>🍖</span>
+                <span>💕</span>
+              </div>
+            )}
             {tier.msg && !editMode && (
               <div className="mood-bubble">
                 <strong>{tier.label}</strong>
@@ -1716,11 +1887,16 @@ function DanceGrowApp() {
             {editMode && <div className="edit-hint">かぐをドラッグして動かせるよ ✋</div>}
           </div>
 
-          {dirtiness[animal] > 0 && (
-            <button className="clean-btn" disabled={roomPointsMap[animal] < 2} onClick={cleanRoom}>
-              🧹 おそうじする（-2pt）{roomPointsMap[animal] < 2 ? "（ポイントが足りないよ）" : ""}
+          <div className="btn-row">
+            <button className="feed-btn" disabled={walletPoints < 1} onClick={() => feedPet(animal)}>
+              🍖 えさをあげる（-1pt）
             </button>
-          )}
+            {dirtiness[animal] > 0 && (
+              <button className="clean-btn" disabled={walletPoints < 2} onClick={() => cleanRoom(animal)}>
+                🧹 おそうじ（-2pt）
+              </button>
+            )}
+          </div>
 
           <button className={`layout-toggle-btn ${editMode ? "active" : ""}`} onClick={() => setEditMode(!editMode)}>
             {editMode ? "✅ レイアウトかんりょう" : "🖐️ 部屋をととのえる"}
@@ -1737,7 +1913,7 @@ function DanceGrowApp() {
               <div className="stat-value">{STAGE_META[stageIdx].label}</div>
             </div>
             <div className="stat-box">
-              <div className="stat-label">げんき度</div>
+              <div className="stat-label">げんき度（みんな共通）</div>
               <div className="health-bar">
                 <div className="health-fill" style={{ width: `${health}%`, background: health >= 65 ? "#35B192" : health >= 35 ? "#FFC94A" : "#E05555" }} />
               </div>
@@ -1745,7 +1921,7 @@ function DanceGrowApp() {
           </div>
 
           <div className="snack-tracker">
-            🍖 おやつ {progress[animal]}こ
+            🍖 このこにあげたおやつ {progress[animal]}こ
             {STAGE_META[stageIdx + 1] && (
               <span className="snack-tracker-next">
                 （つぎの成長まであと{STAGE_META[stageIdx + 1].min - progress[animal]}こ）
@@ -1755,6 +1931,60 @@ function DanceGrowApp() {
 
           {stageIdx >= 1 && !petNames[animal] && <PetNamer onNameSet={setPetName} />}
 
+          <RoomShop roomPoints={walletPoints} owned={decorations[animal]} onBuy={buyItem} />
+        </div>
+      )}
+
+      {screen === "normalTimer" && (
+        <div className="screen timer-screen">
+          <div className="normal-timer-display">
+            {String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:{String(timerSeconds % 60).padStart(2, "0")}
+          </div>
+          <p className="timer-caption">ストレッチ・体幹・ふり覚え…すきな練習をしてね</p>
+          <div className="btn-row">
+            <button className="primary-btn" onClick={pauseResumeTimer}>
+              {timerRunning ? "⏸ 一時停止" : "▶ さいかい"}
+            </button>
+            <button className="cta-btn" style={{ background: "#E05555" }} onClick={endNormalTimer}>
+              ⏹ 終了する
+            </button>
+          </div>
+        </div>
+      )}
+
+      {screen === "normalMemo" && (
+        <div className="screen">
+          <h2 className="title" style={{ fontSize: "1.1rem" }}>
+            おつかれさま！
+          </h2>
+          <div className="score-dial">{Math.round(pendingMinutes)}ぷん</div>
+          {pendingAwarded > 0 && <p className="cal-legend">🍖 +{pendingAwarded}pt もらったよ！</p>}
+          <p className="cal-legend">明日の自分へメッセージを書ける？（書かなくてもポイントはおなじだよ）</p>
+          <textarea
+            className="reflection-textarea"
+            value={normalNote}
+            onChange={(e) => setNormalNote(e.target.value)}
+            placeholder="例）明日はもっと大きく手を動かす！"
+          />
+          <div className="btn-row">
+            <button className="ghost-btn" onClick={() => confirmNormalMemo("")}>
+              かかずにおわる
+            </button>
+            <button className="primary-btn" onClick={() => confirmNormalMemo(normalNote)}>
+              ほぞんする
+            </button>
+          </div>
+        </div>
+      )}
+
+      {screen === "cameraMode" && (
+        <div className="screen">
+          <button className="back-link" onClick={() => setScreen("home")}>
+            ◀ ホームにもどる
+          </button>
+          <h2 className="title" style={{ fontSize: "1.2rem" }}>
+            🎥 カメラ練習
+          </h2>
           <div className="mode-toggle">
             <button className={`mode-btn ${mode === "self" ? "active" : ""}`} onClick={() => setMode("self")}>
               📹 自分と比べる
@@ -1763,13 +1993,9 @@ function DanceGrowApp() {
               👩‍🏫 先生と比べる
             </button>
           </div>
-
-          <button className="cta-btn" onClick={() => startFlow(mode)}>
-            今日の練習をはじめる ▶
+          <button className="cta-btn" onClick={() => startCameraFlow(mode)}>
+            はじめる ▶
           </button>
-
-          <PracticeCalendar practiceLog={practiceLogs[animal]} reflections={reflectionsMap[animal]} animalKey={animal} />
-          <RoomShop roomPoints={roomPointsMap[animal]} owned={decorations[animal]} onBuy={buyItem} />
         </div>
       )}
 
@@ -1843,8 +2069,8 @@ function DanceGrowApp() {
 
       {screen === "timer" && (
         <div className="screen timer-screen">
-          <div className="bounce-loop">
-            {a ? <CharacterArt animal={animal} stageIdx={stageIdx} sizeMult={1.6} /> : "🐾"}
+          <div className="bounce-loop" style={{ fontSize: "3.5rem" }}>
+            💃
           </div>
           <div className="speech-bubble">{cheer}</div>
           <div className="timer-count">
@@ -1891,10 +2117,10 @@ function DanceGrowApp() {
 
       {screen === "analyzing" && (
         <div className="screen center-screen">
-          <div className="bounce-loop">
-            {a ? <CharacterArt animal={animal} stageIdx={stageIdx} sizeMult={1.6} /> : "🐾"}
+          <div className="bounce-loop" style={{ fontSize: "4rem" }}>
+            🔍
           </div>
-          <p>くらべているよ...🔍</p>
+          <p>くらべているよ...</p>
         </div>
       )}
 
@@ -1903,8 +2129,8 @@ function DanceGrowApp() {
           {error ? (
             <>
               <p className="error-text">{error}</p>
-              <button className="primary-btn" onClick={() => setScreen("hub")}>
-                おへやにもどる
+              <button className="primary-btn" onClick={() => setScreen("home")}>
+                ホームにもどる
               </button>
             </>
           ) : (
@@ -1967,7 +2193,7 @@ function DanceGrowApp() {
               </button>
               <div className="score-dial">{score}てん</div>
               <div className={`result-char ${burst ? "celebrate" : ""}`}>
-                <CharacterArt animal={animal} stageIdx={stageIdx} sizeMult={1.3} />
+                <CharacterArt animal={praiseAnimal} stageIdx={Math.min(getStageIndex(progress[praiseAnimal]), 3)} sizeMult={1.3} />
                 {burst && (
                   <div className="sparkle-burst">
                     <span>✨</span>
@@ -1979,19 +2205,14 @@ function DanceGrowApp() {
               {burst && (
                 <div className="celebration-toast">
                   <div className="celebration-title">🎉 おめでとう！</div>
-                  <div className="celebration-sub">おやつ追加 🍖 +1</div>
+                  <div className="celebration-sub">ポイント追加 🍖 +3</div>
                 </div>
               )}
               {praiseMessage && <div className="speech-bubble praise-bubble">{praiseMessage}</div>}
-              <p className="result-message">
-                {awarded ? "🎉 おやつタイム！すごい成長だね！" : "また明日もチャレンジしよう！"}
-              </p>
-              <ReflectionRecorder
-                onSaved={(text) => saveReflection(text)}
-                alreadyRecordedToday={!!(reflectionsMap[animal]?.[todayStr()]?.length > 0)}
-              />
-              <button className="cta-btn" onClick={() => setScreen("hub")}>
-                おへやにもどる
+              <p className="result-message">今日もおつかれさま！</p>
+              <ReflectionRecorder onSaved={(text) => saveReflection(text)} alreadyRecordedToday={todayEntryCount > 0} />
+              <button className="cta-btn" onClick={() => setScreen("home")}>
+                ホームにもどる
               </button>
             </>
           )}
@@ -2000,8 +2221,6 @@ function DanceGrowApp() {
     </div>
   );
 }
-
-/* ============ スタイル ============ */
 const GLOBAL_CSS = `
 :root{
   --bg-top:#EAF7F0;
@@ -2177,6 +2396,25 @@ const GLOBAL_CSS = `
 .cal-reflection-text{font-size:.8rem;line-height:1.5;white-space:pre-wrap;}
 .cal-reflection-full{margin-top:6px;font-size:.75rem;color:#5b6b64;}
 .cal-reflection-full summary{cursor:pointer;font-weight:700;}
+.cal-minutes{font-size:.5rem;color:var(--coral);font-weight:800;}
+.week-banner{background:linear-gradient(135deg,var(--sun),var(--coral));color:#fff;border-radius:12px;padding:8px 10px;font-size:.75rem;font-weight:800;margin-bottom:8px;text-align:center;}
+.month-total-badge{margin-top:10px;background:#F0F7F2;border-radius:12px;padding:8px 10px;font-size:.75rem;font-weight:800;color:#2E6B52;text-align:center;}
+
+/* トップ画面 */
+.wallet-badge{width:100%;text-align:center;background:var(--card);border-radius:14px;padding:8px;font-weight:800;font-size:.85rem;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.menu-row{display:flex;gap:10px;width:100%;}
+.menu-card{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:16px 8px;border:none;border-radius:18px;background:var(--card);font-size:1.8rem;font-weight:800;box-shadow:0 5px 0 rgba(0,0,0,.06);cursor:pointer;}
+.menu-card div{font-size:.85rem;}
+.menu-card.camera{background:linear-gradient(135deg,#FFE9C7,#FFD9A8);}
+.menu-card-sub{font-size:.6rem;color:#8a9690;font-weight:500;}
+.rooms-row-label{align-self:flex-start;font-size:.75rem;font-weight:800;color:#8a9690;}
+.rooms-row{display:flex;gap:8px;width:100%;}
+.room-mini-card{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 4px;border:none;border-radius:16px;position:relative;box-shadow:0 4px 0 rgba(0,0,0,.06);cursor:pointer;}
+.room-mini-name{font-size:.65rem;font-weight:800;}
+.room-mini-mess{position:absolute;top:4px;right:4px;font-size:.6rem;}
+.feed-btn{flex:1;padding:12px;border:none;border-radius:16px;background:var(--coral);color:#fff;font-weight:800;font-size:.85rem;cursor:pointer;box-shadow:0 4px 0 #d9694a;}
+.feed-btn:disabled{opacity:.5;}
+.normal-timer-display{font-size:3rem;font-weight:900;letter-spacing:.05em;}
 .cal-reflection-entry{margin-top:6px;padding-top:6px;border-top:1px solid #e6e2d6;}
 .cal-reflection-entry:first-of-type{margin-top:0;padding-top:0;border-top:none;}
 .cal-stamp-cat{filter:hue-rotate(210deg);}
@@ -2227,8 +2465,9 @@ const GLOBAL_CSS = `
   .video-pair-label{font-size:.85rem;}
 }
 `;
-
-clearTimeout(window.__bootTimeout);
+window.__renderStarted = true;
+if (window.__bootTimeoutSoft) clearTimeout(window.__bootTimeoutSoft);
+if (window.__bootTimeoutHard) clearTimeout(window.__bootTimeoutHard);
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<DanceGrowApp />);
 </script>
