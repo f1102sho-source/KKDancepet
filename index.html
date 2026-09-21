@@ -1374,9 +1374,14 @@ function DanceGrowApp() {
   const [streak, setStreak] = useState(0);
 
   // ノーマル練習（ストップウォッチ）
+  // 画面が暗くなったりスリープしたりしても時間がズレないよう、
+  // 「経過秒数を1秒ずつ足す」のではなく「実際の時刻（Date.now）から逆算する」方式にする。
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const timerIntervalRef = useRef(null);
+  const timerStartRef = useRef(null); // 直近で再開した時刻(ms)
+  const timerBaseRef = useRef(0); // それまでに貯まっていた秒数
+  const wakeLockRef = useRef(null);
   const [pendingMinutes, setPendingMinutes] = useState(0);
   const [pendingAwarded, setPendingAwarded] = useState(0);
   const [normalNote, setNormalNote] = useState("");
@@ -1642,30 +1647,96 @@ function DanceGrowApp() {
   };
 
   /* ============ ノーマル練習（ストップウォッチ） ============ */
+  // 画面がスリープ/バックグラウンドになると setInterval が止まったり間引かれたり
+  // することがあるため、表示更新のたびに「今の本当の時刻」から経過秒数を計算し直す。
+  // こうすることで、タイマーが動いている裏で画面が暗くなっても、
+  // 次に画面がついたときに正しい経過時間へパッと追いつく。
+  const computeElapsedSeconds = () => {
+    const running = timerStartRef.current != null;
+    const extra = running ? Math.floor((Date.now() - timerStartRef.current) / 1000) : 0;
+    return timerBaseRef.current + extra;
+  };
+
+  const requestWakeLock = async () => {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch {
+      /* 対応していない端末/ブラウザでは何もしない（時間計測自体は続く） */
+    }
+  };
+  const releaseWakeLock = () => {
+    try {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    } catch {
+      /* noop */
+    }
+  };
+
+  // タブ/画面が再び見える状態に戻ったら、即座に正しい経過時間へ更新する
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        if (timerStartRef.current != null) {
+          setTimerSeconds(computeElapsedSeconds());
+          // スリープでロックが自動解除されていることがあるので取り直す
+          requestWakeLock();
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const startNormalPractice = () => {
+    timerBaseRef.current = 0;
+    timerStartRef.current = Date.now();
     setTimerSeconds(0);
     setTimerRunning(true);
     setScreen("normalTimer");
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    timerIntervalRef.current = setInterval(() => setTimerSeconds((s) => s + 1), 1000);
+    timerIntervalRef.current = setInterval(() => setTimerSeconds(computeElapsedSeconds()), 1000);
+    requestWakeLock();
   };
   const pauseResumeTimer = () => {
     if (timerRunning) {
+      timerBaseRef.current = computeElapsedSeconds();
+      timerStartRef.current = null;
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
+      setTimerSeconds(timerBaseRef.current);
       setTimerRunning(false);
+      releaseWakeLock();
     } else {
+      timerStartRef.current = Date.now();
       setTimerRunning(true);
-      timerIntervalRef.current = setInterval(() => setTimerSeconds((s) => s + 1), 1000);
+      timerIntervalRef.current = setInterval(() => setTimerSeconds(computeElapsedSeconds()), 1000);
+      requestWakeLock();
     }
   };
   const endNormalTimer = () => {
+    const finalSeconds = computeElapsedSeconds();
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
+    timerStartRef.current = null;
+    timerBaseRef.current = 0;
+    releaseWakeLock();
     setTimerRunning(false);
-    const minutes = timerSeconds / 60;
+    setTimerSeconds(finalSeconds);
+    const minutes = finalSeconds / 60;
     setPendingMinutes(minutes);
 
     const today = todayStr();
@@ -1958,6 +2029,12 @@ function DanceGrowApp() {
             おつかれさま！
           </h2>
           <div className="score-dial">{Math.round(pendingMinutes)}ぷん</div>
+          <p className="cal-legend">
+            今日のノーマル練習の合計：{Math.round(window.__pendingNormalDay?.newTotal ?? pendingMinutes)}分
+            {(masterLog[todayStr()]?.entries || []).filter((e) => e.type === "note").length > 0 || pendingMinutes > 0
+              ? "（何回かに分けた分もぜんぶ合わせた時間だよ）"
+              : ""}
+          </p>
           {pendingAwarded > 0 && <p className="cal-legend">🍖 +{pendingAwarded}pt もらったよ！</p>}
           <p className="cal-legend">明日の自分へメッセージを書ける？（書かなくてもポイントはおなじだよ）</p>
           <textarea
