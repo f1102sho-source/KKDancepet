@@ -2635,4 +2635,67 @@ const GLOBAL_CSS = `
 .menu-card-sub{font-size:.6rem;color:#8a9690;font-weight:500;}
 .rooms-row-label{align-self:flex-start;font-size:.75rem;font-weight:800;color:#8a9690;}
 .rooms-row{display:flex;gap:8px;width:100%;}
-.room-mini-card{flex:1;display:flex;flex-
+.room-mini-card{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 4px;border:none;border-radius:16px;position:relative;box-shadow:0 4px 0 rgba(0,0,0,.06);cursor:pointer;}
+.room-mini-name{font-size:.65rem;font-weight:800;}
+.room-mini-mess{position:absolute;top:4px;right:4px;font-size:.6rem;}
+.feed-btn{flex:1;padding:12px;border:none;border-radius:16px;background:var(--coral);color:#fff;font-weight:800;font-size:.85rem;cursor:pointer;box-shadow:0 4px 0 #d9694a;}
+.feed-btn:disabled{opacity:.5;}
+.normal-timer-display{font-size:3rem;font-weight:900;letter-spacing:.05em;}
+.cal-reflection-entry{margin-top:6px;padding-top:6px;border-top:1px solid #e6e2d6;}
+.cal-reflection-entry:first-of-type{margin-top:0;padding-top:0;border-top:none;}
+.cal-stamp-cat{filter:hue-rotate(210deg);}
+.cal-stamp-chick{filter:hue-rotate(45deg) saturate(1.3);}
+
+/* ペットの名前づけ */
+.pet-namer{width:100%;background:var(--card);border-radius:16px;padding:12px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.pet-namer-row{display:flex;gap:8px;margin-top:6px;}
+.pet-namer-input{flex:1;border-radius:12px;border:1px solid #e0ddd3;padding:8px 10px;font-family:inherit;font-size:.85rem;}
+
+/* 端末間どうき設定 */
+.sync-settings{width:100%;margin-top:8px;}
+.sync-toggle{width:100%;background:none;border:none;color:#8a9690;font-size:.75rem;font-weight:700;cursor:pointer;padding:6px;}
+.sync-panel{background:var(--card);border-radius:14px;padding:12px;margin-top:6px;display:flex;flex-direction:column;gap:6px;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.restore-btn{width:100%;margin-top:8px;padding:10px;border:none;border-radius:14px;background:var(--sun);color:var(--ink);font-weight:800;font-size:.78rem;cursor:pointer;}
+
+/* 反省ノート */
+.reflection-card{width:100%;background:var(--card);border-radius:20px;padding:14px;box-shadow:0 4px 0 rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;}
+.mic-btn{padding:12px;border:none;border-radius:16px;background:var(--sun);font-weight:800;cursor:pointer;}
+.mic-btn.listening{background:#E05555;color:white;}
+.reflection-textarea{width:100%;min-height:70px;border-radius:12px;border:1px solid #e0ddd3;padding:8px;font-family:inherit;font-size:.85rem;resize:vertical;}
+.backup-textarea{min-height:90px;font-size:.65rem;font-family:monospace;word-break:break-all;}
+
+/* 同時さいせいボタン */
+.sync-play-btn{width:100%;padding:12px;border:none;border-radius:16px;background:var(--teal);color:white;font-weight:800;font-size:.85rem;cursor:pointer;}
+
+/* ショップ */
+.shop-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.shop-item{border:none;background:#F7F5EF;border-radius:14px;padding:10px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;box-shadow:0 3px 0 rgba(0,0,0,.05);}
+.shop-item:disabled{cursor:default;}
+.shop-item.owned{background:#E4F5EC;}
+.shop-emoji{font-size:1.5rem;}
+.shop-name{font-size:.72rem;font-weight:700;}
+.shop-cost{font-size:.66rem;color:#8a9690;}
+
+@media (orientation:landscape){
+  .app-root{padding:10px;}
+  .screen{max-width:900px;}
+  .capture-wrap{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
+  .video-frame{aspect-ratio:16/9;max-width:560px;flex:1;min-width:280px;}
+  .door-list{flex-direction:row;}
+  .door-card{flex:1;}
+}
+@media (min-width:820px){
+  .screen{max-width:1100px;}
+  .video-pair.has-landscape{flex-direction:row;gap:28px;}
+  .video-pair{gap:28px;}
+  .video-pair-label{font-size:.85rem;}
+}
+`;
+window.__renderStarted = true;
+if (window.__bootTimeoutSoft) clearTimeout(window.__bootTimeoutSoft);
+if (window.__bootTimeoutHard) clearTimeout(window.__bootTimeoutHard);
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<DanceGrowApp />);
+</script>
+</body>
+</html>
