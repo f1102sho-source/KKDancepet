@@ -132,40 +132,82 @@ if (firebaseReady && window.firebase) {
    それ以外はこれまで通りこの端末だけのlocalStorageに保存する。
    （Claudeのアーティファクト内であれば元々の window.storage をそのまま使う） */
 if (!window.storage) {
+  // 大事な原則：クラウド(Firestore)との通信が一時的に失敗しても、
+  // 「データが無かった」ことにして記録を消してしまうことが絶対にないようにする。
+  // そのため、書き込み時は必ずこの端末のlocalStorageにも控えを残し（クラウドが
+  // つながらなくてもデータは必ずこの端末に残る）、読み込み時にFirestoreへの
+  // 問い合わせが失敗した/圏外だった場合は、例外を投げて「データなし」に
+  // 見せてしまうのではなく、必ずこのlocalStorageの控えにフォールバックする。
   window.storage = {
     async get(key) {
       const code = getSyncCode();
       if (firestoreDb && code) {
-        const doc = await firestoreDb.collection("dancePetSync").doc(code).get();
-        if (!doc.exists || !(key in (doc.data() || {}))) throw new Error("not found");
-        return { key, value: doc.data()[key] };
+        try {
+          const doc = await firestoreDb.collection("dancePetSync").doc(code).get();
+          if (doc.exists && key in (doc.data() || {})) {
+            const value = doc.data()[key];
+            try {
+              localStorage.setItem(key, value);
+            } catch {
+              /* ローカルへの控えに失敗してもクラウドの値は返す */
+            }
+            return { key, value };
+          }
+          // Firestore側にまだこのキーが無い（同期直後など）→ ローカルの控えがあればそれを使う
+          const cached = localStorage.getItem(key);
+          if (cached !== null) return { key, value: cached };
+          throw new Error("not found");
+        } catch (e) {
+          if (e && e.message === "not found") throw e;
+          // 電波が悪い/一時的な通信エラーなどでFirestoreに聞けなかった場合、
+          // 「データが消えた」と誤解させないよう、必ずローカルの控えを試す。
+          const cached = localStorage.getItem(key);
+          if (cached !== null) return { key, value: cached };
+          throw e;
+        }
       }
       const v = localStorage.getItem(key);
       if (v === null) throw new Error("not found");
       return { key, value: v };
     },
     async set(key, value) {
+      // 通信状況にかかわらず、まずこの端末に確実に保存する
+      try {
+        localStorage.setItem(key, value);
+      } catch {
+        /* noop */
+      }
       const code = getSyncCode();
       if (firestoreDb && code) {
-        await firestoreDb
-          .collection("dancePetSync")
-          .doc(code)
-          .set({ [key]: value, _updatedAt: Date.now() }, { merge: true });
-        return { key, value };
+        try {
+          await firestoreDb
+            .collection("dancePetSync")
+            .doc(code)
+            .set({ [key]: value, _updatedAt: Date.now() }, { merge: true });
+        } catch (e) {
+          // クラウドへの同期に失敗しても、この端末のローカル控えは残っているので大丈夫
+          console.error("Firestore sync failed, kept local backup", e);
+        }
       }
-      localStorage.setItem(key, value);
       return { key, value };
     },
     async delete(key) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* noop */
+      }
       const code = getSyncCode();
       if (firestoreDb && code) {
-        await firestoreDb
-          .collection("dancePetSync")
-          .doc(code)
-          .set({ [key]: firebase.firestore.FieldValue.delete() }, { merge: true });
-        return { key, deleted: true };
+        try {
+          await firestoreDb
+            .collection("dancePetSync")
+            .doc(code)
+            .set({ [key]: firebase.firestore.FieldValue.delete() }, { merge: true });
+        } catch (e) {
+          console.error("Firestore delete failed", e);
+        }
       }
-      localStorage.removeItem(key);
       return { key, deleted: true };
     },
     async list(prefix) {
@@ -1392,8 +1434,8 @@ function DanceGrowApp() {
   const [normalNote, setNormalNote] = useState("");
   const [recoveredMinutes, setRecoveredMinutes] = useState(0);
 
-  // 手動での一時的な復元ボタン（今日消えてしまった40分ぶんを1回だけ足す）
-  const MANUAL_FIX_KEY = "dance-pet-manualfix-2026-09-21-40min";
+  // 手動での一時的な復元ボタン（きのう40分・きょう30分、消えてしまった分をまとめて1回だけ足す）
+  const MANUAL_FIX_KEY = "dance-pet-manualfix-2026-09-22-yesterday40-today30";
   const [manualFixDone, setManualFixDone] = useState(() => {
     try {
       return localStorage.getItem(MANUAL_FIX_KEY) === "done";
@@ -1403,11 +1445,17 @@ function DanceGrowApp() {
   });
   const applyManualFix40 = () => {
     const today = todayStr();
-    const { newMasterLog, newWallet, awarded } = foldMinutesIntoDay(today, 40, masterLog, walletPoints);
+    const yesterday = todayStr(-1);
+
+    // きのう(40分)ぶんを先に反映
+    const step1 = foldMinutesIntoDay(yesterday, 40, masterLog, walletPoints);
+    // つづけて、きょう(30分)ぶんをその上に反映
+    const step2 = foldMinutesIntoDay(today, 30, step1.newMasterLog, step1.newWallet);
+
     const newStreak = registerPracticeDay(today);
-    setMasterLog(newMasterLog);
-    setWalletPoints(newWallet);
-    persist({ masterLog: newMasterLog, walletPoints: newWallet, lastPracticeDate: today, streak: newStreak });
+    setMasterLog(step2.newMasterLog);
+    setWalletPoints(step2.newWallet);
+    persist({ masterLog: step2.newMasterLog, walletPoints: step2.newWallet, lastPracticeDate: today, streak: newStreak });
     try {
       localStorage.setItem(MANUAL_FIX_KEY, "done");
     } catch {
@@ -2023,12 +2071,12 @@ function DanceGrowApp() {
           )}
           {!manualFixDone && (
             <div className="week-banner" style={{ background: "linear-gradient(135deg,#F2994A,#F2C94C)" }}>
-              🛠️ 消えてしまった今日の練習40分を復元できます
+              🛠️ 消えてしまった記録（きのう40分・きょう30分）を復元できます
               <button
                 onClick={applyManualFix40}
                 style={{ marginLeft: 8, background: "rgba(255,255,255,.35)", border: "none", borderRadius: 8, color: "#fff", fontWeight: 800, padding: "2px 8px" }}
               >
-                40分を追加する
+                まとめて追加する
               </button>
             </div>
           )}
